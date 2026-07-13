@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>Purchase Tracker</title>
+<link rel="manifest" href="manifest.json" />
+<link rel="icon" href="icon-192.png" />
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<header>
+  <h1>Purchase Tracker</h1>
+  <span id="header-status"></span>
+</header>
+
+<nav class="top-nav">
+  <button id="tab-basket" class="active">Basket</button>
+  <button id="tab-products">Manage Products</button>
+</nav>
+
+<main class="wide">
+
+  <!-- ===================== BASKET TAB ===================== -->
+  <section id="view-basket">
+    <div class="scan-box">
+      <input id="basket-scan" type="text" placeholder="Scan or type a barcode, then press Enter" autofocus />
+      <p class="hint">Scanning the same barcode again increases its quantity.</p>
+    </div>
+
+    <div class="card">
+      <div class="row" style="font-weight:500; color:var(--ink);"><span>Basket</span><span id="basket-count">0 items</span></div>
+      <div id="basket-lines"></div>
+      <p id="basket-empty" class="empty">Basket is empty — scan a barcode above.</p>
+    </div>
+
+    <div class="card">
+      <div class="row" style="align-items:baseline;">
+        <span style="font-size:14px;">Total</span>
+        <span id="basket-total" style="font-size:28px; font-weight:500; color:var(--ink);">€0.00</span>
+      </div>
+    </div>
+    <p id="basket-status" class="status"></p>
+  </section>
+
+  <!-- ===================== PRODUCTS TAB ===================== -->
+  <section id="view-products" style="display:none;">
+
+    <nav class="sub-nav">
+      <button id="subtab-manage" class="active">Check Product</button>
+      <button id="subtab-add">Add Product</button>
+      <button id="subtab-list">Product List</button>
+    </nav>
+
+    <!-- ---- Manage Products ---- -->
+    <div id="sub-manage">
+      <div class="scan-box">
+        <input id="manage-scan" type="text" placeholder="Scan or type a barcode, then press Enter" />
+        <p class="hint">Look up an existing product to view and edit its details.</p>
+      </div>
+      <div id="manage-panel"></div>
+      <p id="manage-status" class="status"></p>
+    </div>
+
+    <!-- ---- Add Product ---- -->
+    <div id="sub-add" style="display:none;">
+      <div class="scan-box">
+        <input id="add-scan" type="text" placeholder="Scan or type a barcode, then press Enter" />
+        <p class="hint">New barcodes open a blank form. Existing barcodes are shown read-only.</p>
+      </div>
+      <div id="add-panel"></div>
+      <p id="add-status" class="status"></p>
+    </div>
+
+    <!-- ---- Product List ---- -->
+    <div id="sub-list" style="display:none;">
+      <div id="list-message"></div>
+      <div class="card">
+        <div class="row" style="font-weight:500; color:var(--ink);"><span>All products</span><span id="list-count">0</span></div>
+      </div>
+
+      <div class="card" id="export-card">
+        <div class="row" style="font-weight:500; color:var(--ink);"><span>Export</span><span></span></div>
+        <div id="export-columns" class="export-columns"></div>
+        <div class="btn split" style="margin-top:12px;">
+          <button id="export-btn" class="btn primary">Export selected columns (CSV)</button>
+          <button id="import-btn" class="btn">Import catalog (CSV)</button>
+        </div>
+        <input id="import-file" type="file" accept=".csv" style="display:none;" />
+        <p id="export-status" class="status"></p>
+        <div id="import-message"></div>
+      </div>
+
+      <div class="card" style="overflow-x:auto;">
+        <table id="product-table">
+          <thead><tr id="product-table-head"></tr></thead>
+          <tbody id="product-table-body"></tbody>
+        </table>
+        <p id="list-empty" class="empty">No products yet.</p>
+      </div>
+    </div>
+
+  </section>
+
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/dexie@3/dist/dexie.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
