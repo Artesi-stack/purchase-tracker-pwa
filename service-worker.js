@@ -32,19 +32,38 @@ self.addEventListener('activate', function (event) {
 });
 
 self.addEventListener('fetch', function (event) {
-  event.respondWith(
-    caches.match(event.request).then(function (cached) {
-      if (cached) return cached;
-      return fetch(event.request).then(function (response) {
-        return caches.open(CACHE_NAME).then(function (cache) {
-          if (event.request.method === 'GET' && response.status === 200) {
-            cache.put(event.request, response.clone());
+  const req = event.request;
+  const url = new URL(req.url);
+
+  if (url.origin === self.location.origin) {
+    // Same-origin app files (HTML/CSS/JS/manifest/icons): try the network first
+    // so updates show up as soon as you're online, but fall back to the last
+    // cached version whenever there's no connection.
+    event.respondWith(
+      fetch(req).then(function (response) {
+        if (req.method === 'GET' && response.status === 200) {
+          const copy = response.clone();
+          caches.open(CACHE_NAME).then(function (cache) { cache.put(req, copy); });
+        }
+        return response;
+      }).catch(function () {
+        return caches.match(req);
+      })
+    );
+  } else {
+    // Cross-origin (Dexie CDN): cache-first, since this rarely changes and
+    // we don't want an external host's slowness/downtime to block loading.
+    event.respondWith(
+      caches.match(req).then(function (cached) {
+        if (cached) return cached;
+        return fetch(req).then(function (response) {
+          if (req.method === 'GET' && response.status === 200) {
+            const copy = response.clone();
+            caches.open(CACHE_NAME).then(function (cache) { cache.put(req, copy); });
           }
           return response;
         });
-      }).catch(function () {
-        return cached;
-      });
-    })
-  );
+      })
+    );
+  }
 });
