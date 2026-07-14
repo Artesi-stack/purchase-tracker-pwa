@@ -292,3 +292,37 @@ table#product-table th, table#product-table td { white-space: nowrap; }
   background: var(--surface);
   color: var(--ink);
 }
+
+.delete-row-btn {
+  height: 30px;
+  padding: 0 10px;
+  font-size: 12px;
+  border: 1px solid #e59a98;
+  border-radius: 6px;
+  background: var(--error-bg);
+  color: var(--error);
+  margin-left: 6px;
+}
+
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2000;
+  padding: 20px;
+}
+.modal-box {
+  background: var(--surface);
+  border-radius: var(--radius);
+  padding: 20px;
+  max-width: 360px;
+  width: 100%;
+}
+.modal-box p {
+  font-size: 15px;
+  margin: 0 0 16px;
+  color: var(--ink);
+}

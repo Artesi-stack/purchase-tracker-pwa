@@ -213,13 +213,6 @@ function buildProductFormHtml(p, readOnly, showCancel, prefix) {
         '<div class="btn split" style="margin-top:10px;">' +
           '<button id="' + prefix + 'form-save-btn" class="btn primary">Save</button>' +
           '<button id="' + prefix + 'form-cancel-btn" class="btn">Cancel</button>' +
-        '</div>' +
-        '<div id="' + prefix + 'cancel-confirm" style="display:none; margin-top:10px;">' +
-          '<p style="font-size:13px; margin:0 0 8px;">Are you sure? This will clear what you\'ve entered.</p>' +
-          '<div class="btn split">' +
-            '<button id="' + prefix + 'cancel-yes-btn" class="btn primary">Yes</button>' +
-            '<button id="' + prefix + 'cancel-no-btn" class="btn">No</button>' +
-          '</div>' +
         '</div>';
     } else {
       html += '<button id="' + prefix + 'form-save-btn" class="btn primary" style="margin-top:10px;">Save</button>';
@@ -321,18 +314,14 @@ function renderManageForm(product, returnTo) {
   });
 
   document.getElementById(p + 'form-cancel-btn').addEventListener('click', function () {
-    document.getElementById(p + 'cancel-confirm').style.display = '';
-  });
-  document.getElementById(p + 'cancel-yes-btn').addEventListener('click', function () {
-    managePanel.innerHTML = '';
-    if (returnTo === 'list') {
-      showSubtab('list');
-    } else {
-      manageScan.focus();
-    }
-  });
-  document.getElementById(p + 'cancel-no-btn').addEventListener('click', function () {
-    document.getElementById(p + 'cancel-confirm').style.display = 'none';
+    openConfirmModal('Are you sure? This will discard your changes.', 'Yes', function () {
+      managePanel.innerHTML = '';
+      if (returnTo === 'list') {
+        showSubtab('list');
+      } else {
+        manageScan.focus();
+      }
+    });
   });
 }
 
@@ -377,14 +366,10 @@ function renderAddForm(code) {
   });
 
   document.getElementById(p + 'form-cancel-btn').addEventListener('click', function () {
-    document.getElementById(p + 'cancel-confirm').style.display = '';
-  });
-  document.getElementById(p + 'cancel-yes-btn').addEventListener('click', function () {
-    addPanel.innerHTML = '';
-    addScan.focus();
-  });
-  document.getElementById(p + 'cancel-no-btn').addEventListener('click', function () {
-    document.getElementById(p + 'cancel-confirm').style.display = 'none';
+    openConfirmModal('Are you sure? This will clear what you\'ve entered.', 'Yes', function () {
+      addPanel.innerHTML = '';
+      addScan.focus();
+    });
   });
 }
 
@@ -428,7 +413,9 @@ async function renderProductList() {
       if (c.key === 'date_added' || c.key === 'date_modified') val = fmtDate(val);
       if (c.key === 'price' || c.key === 'cost_price') val = val != null ? '€' + Number(val).toFixed(2) : '';
       return '<td>' + (val === undefined || val === null ? '' : val) + '</td>';
-    }).join('') + '<td><button class="edit-row-btn" data-barcode="' + p.barcode + '">Edit</button></td></tr>';
+    }).join('') +
+    '<td><button class="edit-row-btn" data-barcode="' + p.barcode + '">Edit</button>' +
+    '<button class="delete-row-btn" data-barcode="' + p.barcode + '">Delete</button></td></tr>';
   }).join('');
 
   document.querySelectorAll('.edit-row-btn').forEach(function (btn) {
@@ -438,6 +425,46 @@ async function renderProductList() {
       showSubtab('manage');
       renderManageForm(product, 'list');
     });
+  });
+
+  document.querySelectorAll('.delete-row-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const barcode = btn.getAttribute('data-barcode');
+      const product = products.find(function (p) { return p.barcode === barcode; });
+      askDeleteProduct(barcode, product ? product.name : barcode);
+    });
+  });
+}
+
+// ===================== GENERIC CONFIRM MODAL (used by Cancel and Delete) =====================
+const confirmModal = document.getElementById('confirm-modal');
+const confirmModalText = document.getElementById('confirm-modal-text');
+const confirmYesBtn = document.getElementById('confirm-yes-btn');
+const confirmNoBtn = document.getElementById('confirm-no-btn');
+let confirmCallback = null;
+
+function openConfirmModal(message, yesLabel, onYes) {
+  confirmModalText.textContent = message;
+  confirmYesBtn.textContent = yesLabel || 'Yes';
+  confirmCallback = onYes;
+  confirmModal.style.display = 'flex';
+}
+function closeConfirmModal() {
+  confirmModal.style.display = 'none';
+  confirmCallback = null;
+}
+confirmNoBtn.addEventListener('click', closeConfirmModal);
+confirmYesBtn.addEventListener('click', function () {
+  const cb = confirmCallback;
+  closeConfirmModal();
+  if (cb) cb();
+});
+
+function askDeleteProduct(barcode, name) {
+  openConfirmModal('Are you sure you want to delete "' + name + '"? This cannot be undone.', 'Yes, delete', async function () {
+    await db.products.delete(barcode);
+    pendingListMessage = 'Product deleted.';
+    renderProductList();
   });
 }
 
