@@ -1,4 +1,4 @@
-const CACHE_NAME = 'purchase-tracker-v1';
+const CACHE_NAME = 'purchase-tracker-v2';
 const CORE_FILES = [
   './',
   './index.html',
@@ -39,9 +39,11 @@ self.addEventListener('fetch', function (event) {
   if (url.origin === self.location.origin) {
     // Same-origin app files (HTML/CSS/JS/manifest/icons): try the network first
     // so updates show up as soon as you're online, but fall back to the last
-    // cached version whenever there's no connection.
+    // cached version whenever there's no connection. cache: 'no-store' bypasses
+    // the browser's own HTTP cache so a normal reload always gets the real
+    // latest file, no hard-refresh needed.
     event.respondWith(
-      fetch(req).then(function (response) {
+      fetch(req, { cache: 'no-store' }).then(function (response) {
         if (req.method === 'GET' && response.status === 200) {
           const copy = response.clone();
           caches.open(CACHE_NAME).then(function (cache) { cache.put(req, copy); });
