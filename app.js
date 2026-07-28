@@ -1,5 +1,5 @@
 // ===================== APP VERSION =====================
-const APP_VERSION = '0.1';
+const APP_VERSION = '0.2';
 
 // ===================== DATA LAYER =====================
 const db = new Dexie('purchase-tracker');
