@@ -138,8 +138,8 @@ main.wide { max-width: 1200px; }
 }
 
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.btn.split { display: flex; gap: 10px; }
-.btn.split > * { flex: 1; }
+.split { display: flex; gap: 10px; }
+.split > * { flex: 1; }
 
 table { width: 100%; border-collapse: collapse; font-size: 13px; }
 th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
