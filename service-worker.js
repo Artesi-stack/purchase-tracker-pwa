@@ -7,7 +7,8 @@ const CORE_FILES = [
   './manifest.json',
   './icon-192.png',
   './icon-512.png',
-  'https://cdn.jsdelivr.net/npm/dexie@3/dist/dexie.min.js'
+  'https://cdn.jsdelivr.net/npm/dexie@3/dist/dexie.min.js',
+  'https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js'
 ];
 
 self.addEventListener('install', function (event) {

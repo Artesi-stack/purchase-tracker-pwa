@@ -18,6 +18,7 @@
 <nav class="top-nav">
   <button id="tab-basket" class="active">Basket</button>
   <button id="tab-products">Manage Products</button>
+  <button id="tab-invoice">Invoice</button>
 </nav>
 
 <main class="wide">
@@ -103,6 +104,106 @@
 
   </section>
 
+  <!-- ===================== INVOICE TAB ===================== -->
+  <section id="view-invoice" style="display:none;">
+
+    <nav class="sub-nav">
+      <button id="subtab-invoice-new" class="active">New Invoice</button>
+      <button id="subtab-invoice-history">History</button>
+      <button id="subtab-invoice-settings">Settings</button>
+    </nav>
+
+    <!-- ---- New Invoice ---- -->
+    <div id="sub-invoice-new">
+      <div class="card">
+        <div class="field">
+          <label>Invoice date</label>
+          <input id="invoice-date" type="date" />
+        </div>
+        <div class="row"><span>Invoice number</span><span id="invoice-number-preview">—</span></div>
+      </div>
+
+      <div class="scan-box">
+        <input id="invoice-scan" type="text" placeholder="Scan or type a barcode, then press Enter" />
+        <p class="hint">Scanning the same barcode again increases its quantity.</p>
+      </div>
+
+      <div class="card">
+        <button id="manual-toggle-btn" class="btn" style="width:100%;">Manual line</button>
+        <div id="manual-fields" style="display:none; margin-top:12px;">
+          <div class="field"><label>Description</label><input id="manual-desc" type="text" /></div>
+          <div class="field"><label>Quantity</label><input id="manual-qty" type="number" value="1" min="1" /></div>
+          <div class="field"><label>Price (€)</label><input id="manual-price" type="number" /></div>
+          <div class="field">
+            <label>Tax rate</label>
+            <select id="manual-tax">
+              <option value="R21">21%</option>
+              <option value="R9">9%</option>
+            </select>
+          </div>
+          <button id="manual-add-btn" class="btn" style="margin-top:6px;">Add manual line</button>
+        </div>
+      </div>
+
+      <div id="invoice-message"></div>
+
+      <div class="card">
+        <div class="row" style="font-weight:500; color:var(--ink);"><span>Invoice lines</span><span id="invoice-count">0 lines</span></div>
+        <div id="invoice-lines"></div>
+        <p id="invoice-empty" class="empty">No lines yet — scan a barcode or add a manual line.</p>
+      </div>
+
+      <div class="card">
+        <div class="row"><span>Subtotal 21%</span><span id="invoice-sub21">€0.00</span></div>
+        <div class="row"><span>Subtotal 9%</span><span id="invoice-sub9">€0.00</span></div>
+        <div class="row" style="align-items:baseline; margin-top:6px;">
+          <span style="font-size:14px;">Total</span>
+          <span id="invoice-total" style="font-size:28px; font-weight:500; color:var(--ink);">€0.00</span>
+        </div>
+      </div>
+
+      <button id="invoice-generate-btn" class="btn primary" style="width:100%;">Save as pending</button>
+      <p class="hint" style="text-align:center;">No invoice number is assigned yet — review and approve it in History to finalize.</p>
+    </div>
+
+    <!-- ---- History ---- -->
+    <div id="sub-invoice-history" style="display:none;">
+      <div class="card">
+        <div class="row" style="font-weight:500; color:var(--ink);"><span>Saved invoices</span><span id="invoice-history-count">0</span></div>
+      </div>
+      <div class="card" style="overflow-x:auto;">
+        <table id="invoice-history-table">
+          <thead><tr><th>Number</th><th>Date</th><th>Created</th><th>Total</th><th>Status</th><th>Actions</th></tr></thead>
+          <tbody id="invoice-history-body"></tbody>
+        </table>
+        <p id="invoice-history-empty" class="empty">No invoices saved yet.</p>
+      </div>
+    </div>
+
+    <!-- ---- Settings ---- -->
+    <div id="sub-invoice-settings" style="display:none;">
+      <div class="card">
+        <div class="field"><label>Trading name</label><input id="settings-business-name" type="text" /></div>
+        <div class="field"><label>Legal name</label><input id="settings-legal-name" type="text" /></div>
+        <div class="field"><label>Address line 1</label><input id="settings-address-line1" type="text" /></div>
+        <div class="field"><label>Address line 2</label><input id="settings-address-line2" type="text" /></div>
+        <div class="field"><label>KVK number</label><input id="settings-kvk" type="text" /></div>
+        <div class="field"><label>VAT number</label><input id="settings-vat-number" type="text" /></div>
+        <div class="field"><label>IBAN</label><input id="settings-iban" type="text" /></div>
+        <div class="field"><label>BIC</label><input id="settings-bic" type="text" /></div>
+        <div class="field">
+          <label>Logo</label>
+          <input id="settings-logo" type="file" accept="image/*" />
+        </div>
+        <div id="settings-logo-preview"></div>
+        <div class="row"><span>Next invoice number</span><span id="settings-next-number">1</span></div>
+        <button id="settings-save-btn" class="btn primary" style="margin-top:10px;">Save settings</button>
+      </div>
+      <div id="settings-message"></div>
+    </div>
+
+  </section>
+
 </main>
 
 <div id="confirm-modal" class="modal-overlay" style="display:none;">
@@ -116,6 +217,7 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/dexie@3/dist/dexie.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

@@ -1,8 +1,25 @@
+// ===================== APP VERSION =====================
+const APP_VERSION = '0.1';
+
 // ===================== DATA LAYER =====================
 const db = new Dexie('purchase-tracker');
 db.version(1).stores({
   products: 'barcode, sku, name, tax_group, category, supplier_id',
   suppliers: 'supplier_id'
+});
+db.version(2).stores({
+  products: 'barcode, sku, name, tax_group, category, supplier_id',
+  suppliers: 'supplier_id',
+  settings: 'id',
+  invoices: 'invoice_number, invoice_date',
+  invoice_items: '++id, invoice_number'
+});
+db.version(3).stores({
+  products: 'barcode, sku, name, tax_group, category, supplier_id',
+  suppliers: 'supplier_id',
+  settings: 'id',
+  invoices: '++id, invoice_number, invoice_date, status',
+  invoice_items: '++id, invoice_id'
 });
 
 // Seed the 7 placeholder suppliers on first run
@@ -62,34 +79,42 @@ function taxLabel(value) {
 // ===================== TOP-LEVEL TAB SWITCHING =====================
 const tabBasket = document.getElementById('tab-basket');
 const tabProducts = document.getElementById('tab-products');
+const tabInvoice = document.getElementById('tab-invoice');
 const viewBasket = document.getElementById('view-basket');
 const viewProducts = document.getElementById('view-products');
+const viewInvoice = document.getElementById('view-invoice');
 
 function focusActiveScanField() {
   if (viewBasket.style.display !== 'none') {
     basketScan.focus();
-  } else if (subManage.style.display !== 'none') {
-    manageScan.focus();
-  } else if (subAdd.style.display !== 'none') {
-    addScan.focus();
+  } else if (viewProducts.style.display !== 'none') {
+    if (subManage.style.display !== 'none') {
+      manageScan.focus();
+    } else if (subAdd.style.display !== 'none') {
+      addScan.focus();
+    }
+  } else if (viewInvoice.style.display !== 'none') {
+    if (subInvoiceNew.style.display !== 'none') {
+      invoiceScan.focus();
+    }
   }
 }
 
-tabBasket.addEventListener('click', function () {
-  tabBasket.classList.add('active');
-  tabProducts.classList.remove('active');
-  viewBasket.style.display = '';
-  viewProducts.style.display = 'none';
+function activateTopTab(name) {
+  tabBasket.classList.toggle('active', name === 'basket');
+  tabProducts.classList.toggle('active', name === 'products');
+  tabInvoice.classList.toggle('active', name === 'invoice');
+  viewBasket.style.display = name === 'basket' ? '' : 'none';
+  viewProducts.style.display = name === 'products' ? '' : 'none';
+  viewInvoice.style.display = name === 'invoice' ? '' : 'none';
+  if (name === 'products') renderProductList();
+  if (name === 'invoice') refreshInvoiceNumberPreview();
   focusActiveScanField();
-});
-tabProducts.addEventListener('click', function () {
-  tabProducts.classList.add('active');
-  tabBasket.classList.remove('active');
-  viewProducts.style.display = '';
-  viewBasket.style.display = 'none';
-  renderProductList();
-  focusActiveScanField();
-});
+}
+
+tabBasket.addEventListener('click', function () { activateTopTab('basket'); });
+tabProducts.addEventListener('click', function () { activateTopTab('products'); });
+tabInvoice.addEventListener('click', function () { activateTopTab('invoice'); });
 
 // ===================== SUB-TAB SWITCHING (Products) =====================
 const subtabManage = document.getElementById('subtab-manage');
@@ -112,6 +137,30 @@ function showSubtab(name) {
 subtabManage.addEventListener('click', function () { showSubtab('manage'); });
 subtabAdd.addEventListener('click', function () { showSubtab('add'); });
 subtabList.addEventListener('click', function () { showSubtab('list'); });
+
+// ===================== SUB-TAB SWITCHING (Invoice) =====================
+const subtabInvoiceNew = document.getElementById('subtab-invoice-new');
+const subtabInvoiceHistory = document.getElementById('subtab-invoice-history');
+const subtabInvoiceSettings = document.getElementById('subtab-invoice-settings');
+const subInvoiceNew = document.getElementById('sub-invoice-new');
+const subInvoiceHistory = document.getElementById('sub-invoice-history');
+const subInvoiceSettings = document.getElementById('sub-invoice-settings');
+
+function showInvoiceSubtab(name) {
+  subtabInvoiceNew.classList.toggle('active', name === 'new');
+  subtabInvoiceHistory.classList.toggle('active', name === 'history');
+  subtabInvoiceSettings.classList.toggle('active', name === 'settings');
+  subInvoiceNew.style.display = name === 'new' ? '' : 'none';
+  subInvoiceHistory.style.display = name === 'history' ? '' : 'none';
+  subInvoiceSettings.style.display = name === 'settings' ? '' : 'none';
+  if (name === 'history') renderInvoiceHistory();
+  if (name === 'settings') loadSettingsIntoForm();
+  if (name === 'new') refreshInvoiceNumberPreview();
+  focusActiveScanField();
+}
+subtabInvoiceNew.addEventListener('click', function () { showInvoiceSubtab('new'); });
+subtabInvoiceHistory.addEventListener('click', function () { showInvoiceSubtab('history'); });
+subtabInvoiceSettings.addEventListener('click', function () { showInvoiceSubtab('settings'); });
 
 // ===================== BASKET TAB =====================
 let basket = []; // { barcode, name, price, tax_group, qty }
@@ -627,10 +676,450 @@ importFile.addEventListener('change', async function () {
   renderProductList();
 });
 
+// ===================== INVOICE: SETTINGS =====================
+const SETTINGS_ID = 'main';
+
+const DEFAULT_SETTINGS_VALUES = {
+  business_name: 'Mama Merienda',
+  legal_name: 'Deity Pinoy Luxury',
+  address_line1: 'Admiraliteitslaan 228',
+  address_line2: "'s-Hertogenbosch, 5224 EJ",
+  kvk: '90556682',
+  vat_number: 'NL004825060B75',
+  iban: '',
+  bic: 'RABONL2U'
+};
+
+async function getSettings() {
+  let s = await db.settings.get(SETTINGS_ID);
+  if (!s) {
+    s = { id: SETTINGS_ID, business_name: '', legal_name: '', address_line1: '', address_line2: '', kvk: '', vat_number: '', iban: '', bic: '', logo: '', counters: {} };
+  }
+  if (!s.counters) s.counters = {};
+  Object.keys(DEFAULT_SETTINGS_VALUES).forEach(function (key) {
+    if (!s[key]) s[key] = DEFAULT_SETTINGS_VALUES[key];
+  });
+  await db.settings.put(s);
+  return s;
+}
+
+function formatInvoiceNumber(year, seq) {
+  return year + '-' + String(seq).padStart(4, '0');
+}
+
+async function loadSettingsIntoForm() {
+  const s = await getSettings();
+  document.getElementById('settings-business-name').value = s.business_name || '';
+  document.getElementById('settings-legal-name').value = s.legal_name || '';
+  document.getElementById('settings-address-line1').value = s.address_line1 || '';
+  document.getElementById('settings-address-line2').value = s.address_line2 || '';
+  document.getElementById('settings-kvk').value = s.kvk || '';
+  document.getElementById('settings-vat-number').value = s.vat_number || '';
+  document.getElementById('settings-iban').value = s.iban || '';
+  document.getElementById('settings-bic').value = s.bic || '';
+  const currentYear = String(new Date().getFullYear());
+  const nextSeq = (s.counters[currentYear] || 0) + 1;
+  document.getElementById('settings-next-number').textContent = formatInvoiceNumber(currentYear, nextSeq);
+  const preview = document.getElementById('settings-logo-preview');
+  preview.innerHTML = s.logo ? '<img src="' + s.logo + '" style="max-height:60px; margin-top:8px;" />' : '';
+}
+
+document.getElementById('settings-logo').addEventListener('change', function (e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function () {
+    const img = new Image();
+    img.onload = function () {
+      const maxWidth = 400;
+      const scale = Math.min(1, maxWidth / img.width);
+      const canvas = document.createElement('canvas');
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const resized = canvas.toDataURL('image/png');
+      document.getElementById('settings-logo-preview').innerHTML =
+        '<img src="' + resized + '" style="max-height:60px; margin-top:8px;" />';
+      document.getElementById('settings-logo-preview').dataset.pendingLogo = resized;
+    };
+    img.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+document.getElementById('settings-save-btn').addEventListener('click', async function () {
+  const s = await getSettings();
+  s.business_name = document.getElementById('settings-business-name').value.trim();
+  s.legal_name = document.getElementById('settings-legal-name').value.trim();
+  s.address_line1 = document.getElementById('settings-address-line1').value.trim();
+  s.address_line2 = document.getElementById('settings-address-line2').value.trim();
+  s.kvk = document.getElementById('settings-kvk').value.trim();
+  s.vat_number = document.getElementById('settings-vat-number').value.trim();
+  s.iban = document.getElementById('settings-iban').value.trim();
+  s.bic = document.getElementById('settings-bic').value.trim();
+  const pendingLogo = document.getElementById('settings-logo-preview').dataset.pendingLogo;
+  if (pendingLogo) s.logo = pendingLogo;
+  await db.settings.put(s);
+  document.getElementById('settings-message').innerHTML = '<div class="msg-box success">Settings saved.</div>';
+  refreshInvoiceNumberPreview();
+});
+
+// ===================== INVOICE: NEW INVOICE =====================
+let invoiceLines = []; // { barcode(optional), description, qty, price, tax_group }
+const invoiceDateEl = document.getElementById('invoice-date');
+const invoiceScan = document.getElementById('invoice-scan');
+const invoiceLinesEl = document.getElementById('invoice-lines');
+const invoiceEmptyEl = document.getElementById('invoice-empty');
+const invoiceCountEl = document.getElementById('invoice-count');
+const invoiceSub21El = document.getElementById('invoice-sub21');
+const invoiceSub9El = document.getElementById('invoice-sub9');
+const invoiceTotalEl = document.getElementById('invoice-total');
+const invoiceMessageEl = document.getElementById('invoice-message');
+
+invoiceDateEl.value = new Date().toISOString().slice(0, 10);
+invoiceDateEl.addEventListener('input', refreshInvoiceNumberPreview);
+
+async function refreshInvoiceNumberPreview() {
+  const s = await getSettings();
+  const year = (invoiceDateEl.value || new Date().toISOString().slice(0, 10)).slice(0, 4);
+  const nextSeq = (s.counters[year] || 0) + 1;
+  document.getElementById('invoice-number-preview').textContent =
+    formatInvoiceNumber(year, nextSeq) + ' (assigned on approval)';
+}
+
+function renderInvoiceLines() {
+  invoiceLinesEl.innerHTML = '';
+  invoiceEmptyEl.style.display = invoiceLines.length === 0 ? '' : 'none';
+  invoiceLines.forEach(function (line) {
+    const div = document.createElement('div');
+    div.className = 'basket-line';
+    const lineTotal = (line.price * line.qty).toFixed(2);
+    div.innerHTML =
+      '<div><div class="name">' + line.description + '</div><div class="meta">' + line.qty + ' x €' + line.price.toFixed(2) + ' · ' + taxLabel(line.tax_group) + '</div></div>' +
+      '<div class="line-total">€' + lineTotal + '</div>';
+    invoiceLinesEl.appendChild(div);
+  });
+  const sub21 = invoiceLines.filter(function (l) { return l.tax_group === 'R21'; }).reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  const sub9 = invoiceLines.filter(function (l) { return l.tax_group === 'R9'; }).reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  const items = invoiceLines.reduce(function (s, l) { return s + l.qty; }, 0);
+  invoiceSub21El.textContent = '€' + sub21.toFixed(2);
+  invoiceSub9El.textContent = '€' + sub9.toFixed(2);
+  invoiceTotalEl.textContent = '€' + (sub21 + sub9).toFixed(2);
+  invoiceCountEl.textContent = items + (items === 1 ? ' line' : ' lines');
+}
+
+invoiceScan.addEventListener('keydown', async function (e) {
+  if (e.key !== 'Enter') return;
+  const code = invoiceScan.value.trim();
+  invoiceScan.value = '';
+  if (!code) return;
+  const product = await db.products.get(code);
+  if (!product) {
+    invoiceMessageEl.innerHTML = '<div class="msg-box warn">Product does not exist. Use a manual line instead, or add it in Products first.</div>';
+    return;
+  }
+  invoiceMessageEl.innerHTML = '';
+  const existing = invoiceLines.find(function (l) { return l.barcode === code; });
+  if (existing) {
+    existing.qty += 1;
+  } else {
+    invoiceLines.push({ barcode: code, description: product.name, price: product.price, tax_group: product.tax_group, qty: 1 });
+  }
+  renderInvoiceLines();
+});
+
+document.getElementById('manual-toggle-btn').addEventListener('click', function () {
+  const fields = document.getElementById('manual-fields');
+  fields.style.display = fields.style.display === 'none' ? '' : 'none';
+});
+
+document.getElementById('manual-add-btn').addEventListener('click', function () {
+  const desc = document.getElementById('manual-desc').value.trim();
+  const qty = parseInt(document.getElementById('manual-qty').value, 10) || 1;
+  const price = parseFloat(document.getElementById('manual-price').value) || 0;
+  const tax = document.getElementById('manual-tax').value;
+  if (!desc) {
+    invoiceMessageEl.innerHTML = '<div class="msg-box error">Description is required for a manual line.</div>';
+    return;
+  }
+  invoiceMessageEl.innerHTML = '';
+  invoiceLines.push({ barcode: null, description: desc, price: price, tax_group: tax, qty: qty });
+  document.getElementById('manual-desc').value = '';
+  document.getElementById('manual-qty').value = '1';
+  document.getElementById('manual-price').value = '';
+  renderInvoiceLines();
+});
+
+// ===================== INVOICE: PDF GENERATION =====================
+function taxRateFraction(taxGroup) {
+  return taxGroup === 'R21' ? 0.21 : 0.09;
+}
+
+function buildInvoiceDocContent(doc, invoiceRecord, items, settings) {
+  const BLUE = [30, 80, 160];
+  let y = 20;
+
+  if (settings.logo) {
+    try { doc.addImage(settings.logo, 140, 10, 50, 35); } catch (e) { /* ignore bad image data */ }
+  }
+
+  doc.setFontSize(11);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(BLUE[0], BLUE[1], BLUE[2]);
+  doc.text(settings.business_name || '', 20, y); y += 6;
+  doc.setFont(undefined, 'normal');
+  doc.setTextColor(0, 0, 0);
+  doc.text(settings.address_line1 || '', 20, y); y += 6;
+  if (settings.address_line2) { doc.text(settings.address_line2, 20, y); y += 6; }
+
+  y += 16;
+  doc.setTextColor(BLUE[0], BLUE[1], BLUE[2]);
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(20);
+  doc.text('FACTUUR', 105, y, { align: 'center' });
+  doc.setTextColor(0, 0, 0);
+  doc.setFont(undefined, 'normal');
+  doc.setFontSize(11);
+  y += 20;
+
+  doc.setDrawColor(BLUE[0], BLUE[1], BLUE[2]);
+  doc.setLineWidth(0.6);
+  doc.line(20, y, 190, y);
+  y += 8;
+
+  doc.text('Factuurnummer: ' + (invoiceRecord.invoice_number || '(concept)'), 20, y);
+  doc.text('Datum: ' + invoiceRecord.invoice_date, 130, y);
+  y += 18;
+
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(BLUE[0], BLUE[1], BLUE[2]);
+  doc.text('Product', 20, y);
+  doc.text('Prijs p/s', 110, y);
+  doc.text('Aantal', 145, y);
+  doc.text('Totaal', 172, y);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont(undefined, 'normal');
+  y += 4;
+  doc.line(20, y, 190, y);
+  y += 6;
+
+  items.forEach(function (item) {
+    const lineTotal = item.price * item.qty;
+    doc.text(String(item.description), 20, y, { maxWidth: 85 });
+    doc.text('€ ' + item.price.toFixed(2), 110, y);
+    doc.text(String(item.qty), 145, y);
+    doc.text('€ ' + lineTotal.toFixed(2), 172, y);
+    y += 8;
+  });
+
+  y += 4;
+  doc.setDrawColor(BLUE[0], BLUE[1], BLUE[2]);
+  doc.line(100, y, 190, y);
+  y += 8;
+
+  const rates = [];
+  if (invoiceRecord.sub21 > 0) rates.push('R21');
+  if (invoiceRecord.sub9 > 0) rates.push('R9');
+
+  let exclTotal = 0;
+  const vatByRate = {};
+  rates.forEach(function (rate) {
+    const amount = rate === 'R21' ? invoiceRecord.sub21 : invoiceRecord.sub9;
+    const frac = taxRateFraction(rate);
+    const excl = amount / (1 + frac);
+    exclTotal += excl;
+    vatByRate[rate] = amount - excl;
+  });
+
+  doc.setFontSize(10);
+  doc.text('Subtotaal (excl. BTW)', 100, y);
+  doc.text('€ ' + exclTotal.toFixed(2), 172, y);
+  y += 7;
+
+  rates.forEach(function (rate) {
+    const label = rate === 'R21' ? 'BTW hoog 21%' : 'BTW laag 9%';
+    doc.text(label, 100, y);
+    doc.text('€ ' + vatByRate[rate].toFixed(2), 172, y);
+    y += 7;
+  });
+
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.setTextColor(BLUE[0], BLUE[1], BLUE[2]);
+  doc.text('Totaal (incl. BTW)', 100, y);
+  doc.text('€ ' + invoiceRecord.total.toFixed(2), 172, y);
+  doc.setTextColor(0, 0, 0);
+  doc.setFont(undefined, 'normal');
+  y += 14;
+
+  const FOOTER_BG = [234, 241, 251];
+  const FOOTER_BORDER = [201, 220, 240];
+  const FOOTER_LABEL = [30, 80, 160];
+  const FOOTER_TEXT = [26, 26, 26];
+
+  const footerLines = [];
+  if (settings.legal_name) footerLines.push({ type: 'plain', text: settings.legal_name });
+  const line1Segments = [];
+  if (settings.kvk) { line1Segments.push({ text: 'KVK ', color: FOOTER_LABEL, bold: true }); line1Segments.push({ text: settings.kvk + '   ', color: FOOTER_TEXT }); }
+  if (settings.vat_number) { line1Segments.push({ text: 'BTW ', color: FOOTER_LABEL, bold: true }); line1Segments.push({ text: settings.vat_number, color: FOOTER_TEXT }); }
+  if (line1Segments.length) footerLines.push({ type: 'segments', segments: line1Segments });
+  const line2Segments = [];
+  if (settings.iban) { line2Segments.push({ text: 'IBAN ', color: FOOTER_LABEL, bold: true }); line2Segments.push({ text: settings.iban + '   ', color: FOOTER_TEXT }); }
+  if (settings.bic) { line2Segments.push({ text: 'BIC ', color: FOOTER_LABEL, bold: true }); line2Segments.push({ text: settings.bic, color: FOOTER_TEXT }); }
+  if (line2Segments.length) footerLines.push({ type: 'segments', segments: line2Segments });
+
+  const padTop = 6, padBottom = 6, lineHeight = 6;
+  const barHeight = padTop + padBottom + Math.max(1, footerLines.length) * lineHeight;
+
+  const PAGE_BOTTOM_MARGIN = 20;
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const minFooterY = pageHeight - PAGE_BOTTOM_MARGIN - barHeight;
+  const footerY = Math.max(y, minFooterY);
+
+  doc.setDrawColor(FOOTER_BORDER[0], FOOTER_BORDER[1], FOOTER_BORDER[2]);
+  doc.setFillColor(FOOTER_BG[0], FOOTER_BG[1], FOOTER_BG[2]);
+  doc.roundedRect(20, footerY, 170, barHeight, 2, 2, 'FD');
+
+  doc.setFontSize(9);
+  let fy = footerY + padTop + 4;
+  footerLines.forEach(function (line) {
+    if (line.type === 'plain') {
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(BLUE[0], BLUE[1], BLUE[2]);
+      doc.text(line.text, 26, fy);
+      doc.setFont(undefined, 'normal');
+    } else {
+      let fx = 26;
+      line.segments.forEach(function (seg) {
+        doc.setFont(undefined, seg.bold ? 'bold' : 'normal');
+        doc.setTextColor(seg.color[0], seg.color[1], seg.color[2]);
+        doc.text(seg.text, fx, fy);
+        fx += doc.getTextWidth(seg.text);
+      });
+      doc.setFont(undefined, 'normal');
+    }
+    fy += lineHeight;
+  });
+  doc.setTextColor(0, 0, 0);
+}
+
+function generateInvoicePDF(invoiceRecord, items, settings) {
+  const doc = new window.jspdf.jsPDF();
+  buildInvoiceDocContent(doc, invoiceRecord, items, settings);
+  const filenamePart = invoiceRecord.invoice_number || ('concept-' + invoiceRecord.id);
+  doc.save('factuur-' + filenamePart + '.pdf');
+}
+
+document.getElementById('invoice-generate-btn').addEventListener('click', async function () {
+  if (invoiceLines.length === 0) {
+    invoiceMessageEl.innerHTML = '<div class="msg-box error">Add at least one line before saving.</div>';
+    return;
+  }
+  const sub21 = invoiceLines.filter(function (l) { return l.tax_group === 'R21'; }).reduce(function (t, l) { return t + l.price * l.qty; }, 0);
+  const sub9 = invoiceLines.filter(function (l) { return l.tax_group === 'R9'; }).reduce(function (t, l) { return t + l.price * l.qty; }, 0);
+
+  const invoiceId = await db.invoices.add({
+    invoice_number: null,
+    status: 'pending',
+    invoice_date: invoiceDateEl.value,
+    total: sub21 + sub9,
+    sub21: sub21,
+    sub9: sub9,
+    created_at: new Date().toISOString()
+  });
+  const itemsSnapshot = invoiceLines.slice();
+  for (const line of itemsSnapshot) {
+    await db.invoice_items.add({
+      invoice_id: invoiceId,
+      barcode: line.barcode,
+      description: line.description,
+      qty: line.qty,
+      price: line.price,
+      tax_group: line.tax_group
+    });
+  }
+
+  invoiceMessageEl.innerHTML = '<div class="msg-box success">Saved as pending — review and approve it in History to assign the official invoice number.</div>';
+  invoiceLines = [];
+  renderInvoiceLines();
+  invoiceDateEl.value = new Date().toISOString().slice(0, 10);
+  refreshInvoiceNumberPreview();
+});
+
+// ===================== INVOICE: HISTORY =====================
+async function approveInvoice(id) {
+  const inv = await db.invoices.get(id);
+  if (!inv || inv.status === 'approved') return;
+  const s = await getSettings();
+  const year = inv.invoice_date.slice(0, 4);
+  const seq = (s.counters[year] || 0) + 1;
+  const invoiceNumber = formatInvoiceNumber(year, seq);
+
+  inv.invoice_number = invoiceNumber;
+  inv.status = 'approved';
+  await db.invoices.put(inv);
+
+  s.counters[year] = seq;
+  await db.settings.put(s);
+
+  renderInvoiceHistory();
+}
+
+async function renderInvoiceHistory() {
+  const invoices = await db.invoices.orderBy('id').reverse().toArray();
+  document.getElementById('invoice-history-count').textContent = invoices.length;
+  document.getElementById('invoice-history-empty').style.display = invoices.length === 0 ? '' : 'none';
+  document.getElementById('invoice-history-body').innerHTML = invoices.map(function (inv) {
+    const badge = inv.status === 'approved'
+      ? '<span class="status-badge approved">Approved</span>'
+      : '<span class="status-badge pending">Pending review</span>';
+    const numberDisplay = inv.invoice_number || '—';
+
+    let actions = '<button class="edit-row-btn" data-id="' + inv.id + '" data-action="download">Download</button>';
+    if (inv.status !== 'approved') {
+      actions =
+        '<button class="edit-row-btn" data-id="' + inv.id + '" data-action="approve">Approve</button> ' +
+        '<button class="delete-row-btn" data-id="' + inv.id + '" data-action="delete">Delete</button> ' +
+        actions;
+    }
+
+    return '<tr><td>' + numberDisplay + '</td><td>' + inv.invoice_date + '</td><td>' + fmtDate(inv.created_at) + '</td><td>€' + inv.total.toFixed(2) + '</td>' +
+      '<td>' + badge + '</td><td>' + actions + '</td></tr>';
+  }).join('');
+
+  document.querySelectorAll('#invoice-history-body button').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      const id = parseInt(btn.getAttribute('data-id'), 10);
+      const action = btn.getAttribute('data-action');
+
+      if (action === 'download') {
+        const invoiceRecord = await db.invoices.get(id);
+        const items = await db.invoice_items.where('invoice_id').equals(id).toArray();
+        const settings = await getSettings();
+        generateInvoicePDF(invoiceRecord, items, settings);
+      } else if (action === 'approve') {
+        openConfirmModal('Are you sure you want to approve this invoice? This will assign the official invoice number and cannot be undone.', 'Yes, approve', async function () {
+          await approveInvoice(id);
+        });
+      } else if (action === 'delete') {
+        openConfirmModal('Are you sure you want to delete this pending invoice? This cannot be undone.', 'Yes, delete', async function () {
+          await db.invoice_items.where('invoice_id').equals(id).delete();
+          await db.invoices.delete(id);
+          renderInvoiceHistory();
+        });
+      }
+    });
+  });
+}
+
 // ===================== INIT =====================
 (async function init() {
+  document.getElementById('header-status').textContent = 'v' + APP_VERSION;
   await seedSuppliers();
   await refreshSupplierMap();
+  await getSettings();
 })();
 
 // ===================== SERVICE WORKER =====================
