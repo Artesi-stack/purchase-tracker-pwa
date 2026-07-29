@@ -1,5 +1,5 @@
 // ===================== APP VERSION =====================
-const APP_VERSION = '0.6';
+const APP_VERSION = '0.7';
 
 // ===================== GLOBAL ERROR VISIBILITY =====================
 // Since some devices (e.g. tablets with no USB port) can't be debugged with
@@ -34,7 +34,17 @@ db.version(2).stores({
   invoices: 'invoice_number, invoice_date',
   invoice_items: '++id, invoice_number'
 });
+// Changing a table's primary key isn't supported in a single version step in
+// Dexie — the old invoices/invoice_items tables must be fully removed first
+// (version 3), then recreated with the new structure (version 4).
 db.version(3).stores({
+  products: 'barcode, sku, name, tax_group, category, supplier_id',
+  suppliers: 'supplier_id',
+  settings: 'id',
+  invoices: null,
+  invoice_items: null
+});
+db.version(4).stores({
   products: 'barcode, sku, name, tax_group, category, supplier_id',
   suppliers: 'supplier_id',
   settings: 'id',
@@ -793,6 +803,26 @@ document.getElementById('settings-save-btn').addEventListener('click', async fun
   }
 });
 
+document.getElementById('settings-backup-btn').addEventListener('click', async function () {
+  try {
+    const s = await getSettings();
+    const backupCopy = Object.assign({}, s);
+    delete backupCopy.logo; // skip the large image data, keep the backup small and readable
+    const content = JSON.stringify(backupCopy, null, 2);
+    const blob = new Blob([content], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'settings-backup.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (err) {
+    document.getElementById('settings-message').innerHTML = '<div class="msg-box error">Backup failed: ' + (err.message || err) + '</div>';
+  }
+});
+
 // ===================== INVOICE: NEW INVOICE =====================
 let invoiceLines = []; // { barcode(optional), description, qty, price, tax_group }
 const invoiceDateEl = document.getElementById('invoice-date');
@@ -1094,6 +1124,40 @@ async function approveInvoice(id) {
 
   renderInvoiceHistory();
 }
+
+function csvFromRows(rows, columns) {
+  const header = columns.join(',');
+  const lines = rows.map(function (r) {
+    return columns.map(function (c) {
+      let val = r[c];
+      if (val === undefined || val === null) val = '';
+      const str = String(val).replace(/"/g, '""');
+      return /[",\n]/.test(str) ? '"' + str + '"' : str;
+    }).join(',');
+  });
+  return [header].concat(lines).join('\n');
+}
+
+function downloadTextFile(filename, content, mimeType) {
+  const blob = new Blob([content], { type: mimeType || 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+document.getElementById('invoice-backup-btn').addEventListener('click', async function () {
+  const invoices = await db.invoices.toArray();
+  const items = await db.invoice_items.toArray();
+  const invoiceCols = ['id', 'invoice_number', 'status', 'invoice_date', 'total', 'sub21', 'sub9', 'created_at'];
+  const itemCols = ['id', 'invoice_id', 'barcode', 'description', 'qty', 'price', 'tax_group'];
+  downloadTextFile('invoices-backup.csv', csvFromRows(invoices, invoiceCols));
+  downloadTextFile('invoice-items-backup.csv', csvFromRows(items, itemCols));
+});
 
 async function renderInvoiceHistory() {
   const invoices = await db.invoices.orderBy('id').reverse().toArray();
