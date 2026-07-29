@@ -1,5 +1,25 @@
 // ===================== APP VERSION =====================
-const APP_VERSION = '0.5';
+const APP_VERSION = '0.6';
+
+// ===================== GLOBAL ERROR VISIBILITY =====================
+// Since some devices (e.g. tablets with no USB port) can't be debugged with
+// DevTools, surface any otherwise-silent error directly on screen.
+function showGlobalError(message) {
+  let el = document.getElementById('global-error-banner');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'global-error-banner';
+    el.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:3000; background:#a3231f; color:#fff; padding:12px 16px; font-size:13px; font-weight:600;';
+    document.body.appendChild(el);
+  }
+  el.textContent = 'Error: ' + message;
+}
+window.addEventListener('error', function (e) {
+  showGlobalError(e.message || 'Unknown error');
+});
+window.addEventListener('unhandledrejection', function (e) {
+  showGlobalError((e.reason && e.reason.message) ? e.reason.message : String(e.reason));
+});
 
 // ===================== DATA LAYER =====================
 const db = new Dexie('purchase-tracker');
@@ -620,60 +640,64 @@ importFile.addEventListener('change', async function () {
   importFile.value = '';
   if (!file) return;
 
-  const text = await file.text();
-  const rows = parseCSV(text);
-  if (rows.length === 0) {
-    importMessageEl.innerHTML = '<div class="msg-box warn">The file appears to be empty.</div>';
-    return;
+  try {
+    const text = await file.text();
+    const rows = parseCSV(text);
+    if (rows.length === 0) {
+      importMessageEl.innerHTML = '<div class="msg-box warn">The file appears to be empty.</div>';
+      return;
+    }
+
+    const header = rows[0].map(function (h) { return h.trim(); });
+    const colIdx = {};
+    ALL_COLUMNS.forEach(function (c) { colIdx[c.key] = header.indexOf(c.label); });
+
+    if (colIdx.barcode === -1) {
+      importMessageEl.innerHTML = '<div class="msg-box warn">Could not find a "Barcode" column in this file.</div>';
+      return;
+    }
+
+    await refreshSupplierMap();
+    const nameToId = {};
+    Object.keys(supplierMap).forEach(function (id) { nameToId[supplierMap[id]] = parseInt(id, 10); });
+
+    let added = 0, updated = 0, skipped = 0;
+    const now = new Date().toISOString();
+
+    for (let i = 1; i < rows.length; i++) {
+      const r = rows[i];
+      const barcode = (r[colIdx.barcode] || '').trim();
+      if (!barcode) { skipped++; continue; }
+
+      const existing = await db.products.get(barcode);
+      const get = function (key, fallback) {
+        return colIdx[key] !== -1 && r[colIdx[key]] !== undefined ? r[colIdx[key]] : fallback;
+      };
+
+      const product = {
+        barcode: barcode,
+        sku: get('sku', existing ? existing.sku : ''),
+        name: get('name', existing ? existing.name : ''),
+        price: parseFloat(String(get('price', existing ? existing.price : 0)).replace('€', '')) || 0,
+        cost_price: parseFloat(String(get('cost_price', existing ? existing.cost_price : 0)).replace('€', '')) || 0,
+        category: get('category', existing ? existing.category : ''),
+        tax_group: colIdx.tax_group !== -1 ? mapTaxImportValue(r[colIdx.tax_group]) : (existing ? existing.tax_group : ''),
+        supplier_id: colIdx.supplier_id !== -1 ? resolveSupplierIdOnImport(r[colIdx.supplier_id], nameToId) : (existing ? existing.supplier_id : ''),
+        date_added: (colIdx.date_added !== -1 ? parseImportDate(r[colIdx.date_added]) : null) || (existing ? existing.date_added : now),
+        date_modified: now
+      };
+
+      await db.products.put(product);
+      if (existing) updated++; else added++;
+    }
+
+    let msg = 'Import complete: ' + added + ' added, ' + updated + ' updated.';
+    if (skipped > 0) msg += ' ' + skipped + ' row(s) skipped (missing barcode).';
+    importMessageEl.innerHTML = '<div class="msg-box success">' + msg + '</div>';
+    renderProductList();
+  } catch (err) {
+    importMessageEl.innerHTML = '<div class="msg-box error">Import failed: ' + (err.message || err) + '</div>';
   }
-
-  const header = rows[0].map(function (h) { return h.trim(); });
-  const colIdx = {};
-  ALL_COLUMNS.forEach(function (c) { colIdx[c.key] = header.indexOf(c.label); });
-
-  if (colIdx.barcode === -1) {
-    importMessageEl.innerHTML = '<div class="msg-box warn">Could not find a "Barcode" column in this file.</div>';
-    return;
-  }
-
-  await refreshSupplierMap();
-  const nameToId = {};
-  Object.keys(supplierMap).forEach(function (id) { nameToId[supplierMap[id]] = parseInt(id, 10); });
-
-  let added = 0, updated = 0, skipped = 0;
-  const now = new Date().toISOString();
-
-  for (let i = 1; i < rows.length; i++) {
-    const r = rows[i];
-    const barcode = (r[colIdx.barcode] || '').trim();
-    if (!barcode) { skipped++; continue; }
-
-    const existing = await db.products.get(barcode);
-    const get = function (key, fallback) {
-      return colIdx[key] !== -1 && r[colIdx[key]] !== undefined ? r[colIdx[key]] : fallback;
-    };
-
-    const product = {
-      barcode: barcode,
-      sku: get('sku', existing ? existing.sku : ''),
-      name: get('name', existing ? existing.name : ''),
-      price: parseFloat(String(get('price', existing ? existing.price : 0)).replace('€', '')) || 0,
-      cost_price: parseFloat(String(get('cost_price', existing ? existing.cost_price : 0)).replace('€', '')) || 0,
-      category: get('category', existing ? existing.category : ''),
-      tax_group: colIdx.tax_group !== -1 ? mapTaxImportValue(r[colIdx.tax_group]) : (existing ? existing.tax_group : ''),
-      supplier_id: colIdx.supplier_id !== -1 ? resolveSupplierIdOnImport(r[colIdx.supplier_id], nameToId) : (existing ? existing.supplier_id : ''),
-      date_added: (colIdx.date_added !== -1 ? parseImportDate(r[colIdx.date_added]) : null) || (existing ? existing.date_added : now),
-      date_modified: now
-    };
-
-    await db.products.put(product);
-    if (existing) updated++; else added++;
-  }
-
-  let msg = 'Import complete: ' + added + ' added, ' + updated + ' updated.';
-  if (skipped > 0) msg += ' ' + skipped + ' row(s) skipped (missing barcode).';
-  importMessageEl.innerHTML = '<div class="msg-box success">' + msg + '</div>';
-  renderProductList();
 });
 
 // ===================== INVOICE: SETTINGS =====================
@@ -749,20 +773,24 @@ document.getElementById('settings-logo').addEventListener('change', function (e)
 });
 
 document.getElementById('settings-save-btn').addEventListener('click', async function () {
-  const s = await getSettings();
-  s.business_name = document.getElementById('settings-business-name').value.trim();
-  s.legal_name = document.getElementById('settings-legal-name').value.trim();
-  s.address_line1 = document.getElementById('settings-address-line1').value.trim();
-  s.address_line2 = document.getElementById('settings-address-line2').value.trim();
-  s.kvk = document.getElementById('settings-kvk').value.trim();
-  s.vat_number = document.getElementById('settings-vat-number').value.trim();
-  s.iban = document.getElementById('settings-iban').value.trim();
-  s.bic = document.getElementById('settings-bic').value.trim();
-  const pendingLogo = document.getElementById('settings-logo-preview').dataset.pendingLogo;
-  if (pendingLogo) s.logo = pendingLogo;
-  await db.settings.put(s);
-  document.getElementById('settings-message').innerHTML = '<div class="msg-box success">Settings saved.</div>';
-  refreshInvoiceNumberPreview();
+  try {
+    const s = await getSettings();
+    s.business_name = document.getElementById('settings-business-name').value.trim();
+    s.legal_name = document.getElementById('settings-legal-name').value.trim();
+    s.address_line1 = document.getElementById('settings-address-line1').value.trim();
+    s.address_line2 = document.getElementById('settings-address-line2').value.trim();
+    s.kvk = document.getElementById('settings-kvk').value.trim();
+    s.vat_number = document.getElementById('settings-vat-number').value.trim();
+    s.iban = document.getElementById('settings-iban').value.trim();
+    s.bic = document.getElementById('settings-bic').value.trim();
+    const pendingLogo = document.getElementById('settings-logo-preview').dataset.pendingLogo;
+    if (pendingLogo) s.logo = pendingLogo;
+    await db.settings.put(s);
+    document.getElementById('settings-message').innerHTML = '<div class="msg-box success">Settings saved.</div>';
+    refreshInvoiceNumberPreview();
+  } catch (err) {
+    document.getElementById('settings-message').innerHTML = '<div class="msg-box error">Save failed: ' + (err.message || err) + '</div>';
+  }
 });
 
 // ===================== INVOICE: NEW INVOICE =====================
