@@ -25,25 +25,95 @@
 
   <!-- ===================== BASKET TAB ===================== -->
   <section id="view-basket">
-    <div class="scan-box">
-      <input id="basket-scan" type="text" placeholder="Scan or type a barcode, then press Enter" autofocus />
-      <p class="hint">Scanning the same barcode again increases its quantity.</p>
-    </div>
 
-    <div class="card">
-      <div class="row" style="font-weight:500; color:var(--ink);"><span>Basket</span><span id="basket-count">0 items</span></div>
-      <div id="basket-lines"></div>
-      <p id="basket-empty" class="empty">Basket is empty — scan a barcode above.</p>
-    </div>
+    <nav class="sub-nav">
+      <button id="subtab-basket-new" class="active">New Order</button>
+      <button id="subtab-basket-history">History</button>
+    </nav>
 
-    <div class="card">
-      <div class="row" style="align-items:baseline;">
-        <span style="font-size:14px;">Total</span>
-        <span id="basket-total" style="font-size:28px; font-weight:500; color:var(--ink);">€0.00</span>
+    <!-- ---- New Order ---- -->
+    <div id="sub-basket-new">
+      <div class="scan-box">
+        <input id="basket-scan" type="text" placeholder="Scan or type a barcode, then press Enter" autofocus />
+        <p class="hint">Scanning the same barcode again increases its quantity.</p>
+      </div>
+
+      <div id="basket-message"></div>
+
+      <div class="card">
+        <div class="row" style="font-weight:500; color:var(--ink);"><span>Basket</span><span id="basket-count">0 items</span></div>
+        <div id="basket-lines"></div>
+        <p id="basket-empty" class="empty">Basket is empty — scan a barcode above.</p>
+      </div>
+
+      <div class="card">
+        <div class="row" style="align-items:baseline;">
+          <span style="font-size:14px;">Total</span>
+          <span id="basket-total" style="font-size:28px; font-weight:500; color:var(--ink);">€0.00</span>
+        </div>
+      </div>
+
+      <div class="split">
+        <button id="confirm-order-btn" class="btn primary">Confirm order</button>
+        <button id="void-basket-btn" class="btn">Void basket</button>
+      </div>
+
+      <div class="card" style="margin-top:16px;">
+        <button id="today-summary-toggle-btn" class="btn" style="width:100%;">Today's summary</button>
+        <div id="today-summary-body" style="display:none; margin-top:12px;">
+          <div class="row"><span>Cash</span><span id="summary-cash">€0.00</span></div>
+          <div class="row"><span>PIN</span><span id="summary-pin">€0.00</span></div>
+          <div class="row" style="font-weight:500; color:var(--ink);"><span>Total</span><span id="summary-total">€0.00</span></div>
+          <div class="row"><span>Orders</span><span id="summary-count">0</span></div>
+        </div>
       </div>
     </div>
-    <p id="basket-status" class="status"></p>
+
+    <!-- ---- History ---- -->
+    <div id="sub-basket-history" style="display:none;">
+
+      <div class="card">
+        <div class="row" style="font-weight:500; color:var(--ink);"><span>Order history</span><span id="basket-history-count">0</span></div>
+      </div>
+      <div id="basket-history-message"></div>
+
+      <div class="card">
+        <button id="order-export-toggle-btn" class="btn" style="width:100%;">Export</button>
+        <div id="order-export-body" style="display:none; margin-top:12px;">
+          <button id="order-export-new-btn" class="btn btn-sm primary">Export new sales only</button>
+          <div style="display:flex; gap:8px; margin-top:8px;">
+            <input id="order-export-from" type="date" class="date-input-sm" />
+            <input id="order-export-to" type="date" class="date-input-sm" />
+          </div>
+          <button id="order-export-range-btn" class="btn btn-sm" style="margin-top:6px;">Export date range</button>
+          <p id="order-export-status" class="status"></p>
+
+          <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
+            <p class="hint" style="margin:0 0 6px;">Restore from a previous backup file:</p>
+            <button id="select-order-backup-file-btn" class="btn btn-sm" style="margin-bottom:6px;">Select backup file</button>
+            <span id="order-backup-file-name" style="font-size:12px; color:var(--muted); display:block; margin-bottom:6px;">No file selected</span>
+            <input id="import-order-backup-file" type="file" accept=".csv,text/csv,text/plain" style="display:none;" />
+            <button id="order-restore-btn" class="btn btn-sm primary">Restore order backup</button>
+          </div>
+          <div id="order-restore-message"></div>
+        </div>
+      </div>
+
+      <div id="basket-history-groups"></div>
+      <p id="basket-history-empty" class="empty">No confirmed orders yet.</p>
+    </div>
+
   </section>
+
+  <div id="payment-modal" class="modal-overlay" style="display:none;">
+    <div class="modal-box">
+      <p id="payment-modal-text">How was this order paid?</p>
+      <div class="split">
+        <button id="payment-cash-btn" class="btn">Cash</button>
+        <button id="payment-pin-btn" class="btn primary">PIN</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ===================== PRODUCTS TAB ===================== -->
   <section id="view-products" style="display:none;">
@@ -120,6 +190,9 @@
           <label>Invoice date</label>
           <input id="invoice-date" type="date" />
         </div>
+        <div class="field"><label>Buyer name (optional)</label><input id="invoice-buyer-name" type="text" /></div>
+        <div class="field"><label>Buyer address line 1 (optional)</label><input id="invoice-buyer-address1" type="text" /></div>
+        <div class="field"><label>Buyer address line 2 (optional)</label><input id="invoice-buyer-address2" type="text" /></div>
         <div class="row"><span>Invoice number</span><span id="invoice-number-preview">—</span></div>
       </div>
 
@@ -171,6 +244,16 @@
       <div class="card">
         <div class="row" style="font-weight:500; color:var(--ink);"><span>Saved invoices</span><span id="invoice-history-count">0</span></div>
         <button id="invoice-backup-btn" class="btn" style="margin-top:10px;">Download invoice backup (CSV)</button>
+
+        <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
+          <p class="hint" style="margin:0 0 8px;">Restore from a previous backup file:</p>
+          <button id="select-backup-file-btn" class="btn" style="margin-bottom:8px;">Select backup file</button>
+          <span id="backup-file-name" style="font-size:12px; color:var(--muted); display:block; margin-bottom:8px;">No file selected</span>
+          <input id="import-backup-file" type="file" accept=".csv,text/csv,text/plain" style="display:none;" />
+
+          <button id="invoice-restore-btn" class="btn primary">Restore invoice backup</button>
+        </div>
+        <div id="invoice-restore-message"></div>
       </div>
       <div class="card" style="overflow-x:auto;">
         <table id="invoice-history-table">

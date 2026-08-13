@@ -1,5 +1,5 @@
 // ===================== APP VERSION =====================
-const APP_VERSION = '0.7';
+const APP_VERSION = '0.32';
 
 // ===================== GLOBAL ERROR VISIBILITY =====================
 // Since some devices (e.g. tablets with no USB port) can't be debugged with
@@ -50,6 +50,15 @@ db.version(4).stores({
   settings: 'id',
   invoices: '++id, invoice_number, invoice_date, status',
   invoice_items: '++id, invoice_id'
+});
+db.version(5).stores({
+  products: 'barcode, sku, name, tax_group, category, supplier_id',
+  suppliers: 'supplier_id',
+  settings: 'id',
+  invoices: '++id, invoice_number, invoice_date, status',
+  invoice_items: '++id, invoice_id',
+  orders: '++id, status, confirmed_at, exported',
+  order_items: '++id, order_id'
 });
 
 // Seed the 7 placeholder suppliers on first run
@@ -116,7 +125,9 @@ const viewInvoice = document.getElementById('view-invoice');
 
 function focusActiveScanField() {
   if (viewBasket.style.display !== 'none') {
-    basketScan.focus();
+    if (subBasketNew.style.display !== 'none') {
+      basketScan.focus();
+    }
   } else if (viewProducts.style.display !== 'none') {
     if (subManage.style.display !== 'none') {
       manageScan.focus();
@@ -145,6 +156,23 @@ function activateTopTab(name) {
 tabBasket.addEventListener('click', function () { activateTopTab('basket'); });
 tabProducts.addEventListener('click', function () { activateTopTab('products'); });
 tabInvoice.addEventListener('click', function () { activateTopTab('invoice'); });
+
+// ===================== SUB-TAB SWITCHING (Basket) =====================
+const subtabBasketNew = document.getElementById('subtab-basket-new');
+const subtabBasketHistory = document.getElementById('subtab-basket-history');
+const subBasketNew = document.getElementById('sub-basket-new');
+const subBasketHistory = document.getElementById('sub-basket-history');
+
+function showBasketSubtab(name) {
+  subtabBasketNew.classList.toggle('active', name === 'new');
+  subtabBasketHistory.classList.toggle('active', name === 'history');
+  subBasketNew.style.display = name === 'new' ? '' : 'none';
+  subBasketHistory.style.display = name === 'history' ? '' : 'none';
+  if (name === 'history') renderOrderHistory();
+  focusActiveScanField();
+}
+subtabBasketNew.addEventListener('click', function () { showBasketSubtab('new'); });
+subtabBasketHistory.addEventListener('click', function () { showBasketSubtab('history'); });
 
 // ===================== SUB-TAB SWITCHING (Products) =====================
 const subtabManage = document.getElementById('subtab-manage');
@@ -193,35 +221,135 @@ subtabInvoiceHistory.addEventListener('click', function () { showInvoiceSubtab('
 subtabInvoiceSettings.addEventListener('click', function () { showInvoiceSubtab('settings'); });
 
 // ===================== BASKET TAB =====================
-let basket = []; // { barcode, name, price, tax_group, qty }
+function setStatus(el, msg) {
+  el.textContent = msg;
+  setTimeout(function () { el.textContent = ''; }, 2000);
+}
+
+let currentOrderId = null;
+let basketLines = []; // { id (order_item id), barcode, name, price, qty, tax_group }
 const basketScan = document.getElementById('basket-scan');
-const basketLines = document.getElementById('basket-lines');
+const basketLinesEl = document.getElementById('basket-lines');
 const basketEmpty = document.getElementById('basket-empty');
 const basketCount = document.getElementById('basket-count');
 const basketTotal = document.getElementById('basket-total');
-const basketStatus = document.getElementById('basket-status');
+const basketMessageEl = document.getElementById('basket-message');
 
-function renderBasket() {
-  basketLines.innerHTML = '';
-  basketEmpty.style.display = basket.length === 0 ? '' : 'none';
-  basket.forEach(function (line) {
-    const div = document.createElement('div');
-    div.className = 'basket-line';
-    const lineTotal = (line.price * line.qty).toFixed(2);
-    div.innerHTML =
-      '<div><div class="name">' + line.name + '</div><div class="meta">' + line.qty + ' x €' + line.price.toFixed(2) + ' · ' + taxLabel(line.tax_group) + '</div></div>' +
-      '<div class="line-total">€' + lineTotal + '</div>';
-    basketLines.appendChild(div);
+async function loadActiveOrCreateOrder() {
+  let activeOrder = await db.orders.where('status').equals('active').first();
+  if (!activeOrder) {
+    const id = await db.orders.add({
+      created_at: new Date().toISOString(),
+      confirmed_at: null,
+      total: 0,
+      payment_method: null,
+      status: 'active',
+      edited_at: null,
+      exported: false,
+      exported_at: null
+    });
+    activeOrder = await db.orders.get(id);
+  }
+  currentOrderId = activeOrder.id;
+  const items = await db.order_items.where('order_id').equals(currentOrderId).toArray();
+  basketLines = items.map(function (it) {
+    return { id: it.id, barcode: it.barcode, name: it.name, price: it.price, qty: it.qty, tax_group: it.tax_group };
   });
-  const total = basket.reduce(function (s, l) { return s + l.price * l.qty; }, 0);
-  const items = basket.reduce(function (s, l) { return s + l.qty; }, 0);
+  renderBasketLines();
+}
+
+async function saveOrderTotal() {
+  const total = basketLines.reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  await db.orders.update(currentOrderId, { total: total });
+}
+
+function updateBasketSummary() {
+  const total = basketLines.reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  const items = basketLines.reduce(function (s, l) { return s + l.qty; }, 0);
   basketTotal.textContent = '€' + total.toFixed(2);
   basketCount.textContent = items + (items === 1 ? ' item' : ' items');
 }
 
-function setStatus(el, msg) {
-  el.textContent = msg;
-  setTimeout(function () { el.textContent = ''; }, 2000);
+function renderBasketLines() {
+  basketLinesEl.innerHTML = '';
+  basketEmpty.style.display = basketLines.length === 0 ? '' : 'none';
+
+  basketLines.forEach(function (line, idx) {
+    const div = document.createElement('div');
+    div.className = 'invoice-line-card';
+    const lineTotal = (line.price * line.qty).toFixed(2);
+    const taxClass = line.tax_group === 'R21' ? 'r21' : 'r9';
+    div.innerHTML =
+      '<div class="invoice-line-name">' + line.name + '</div>' +
+      '<div class="invoice-line-price-stepper">' +
+        '<button class="invoice-line-price-btn" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease price">&minus;</button>' +
+        '<div class="invoice-line-price-wrap">' +
+          '<span class="invoice-line-currency">€</span>' +
+          '<input type="text" inputmode="decimal" class="invoice-line-price-input" data-idx="' + idx + '" value="' + line.price.toFixed(2) + '" />' +
+        '</div>' +
+        '<button class="invoice-line-price-btn" data-idx="' + idx + '" data-dir="1" aria-label="Increase price">+</button>' +
+      '</div>' +
+      '<div class="invoice-line-qty-stepper">' +
+        '<button class="invoice-line-qty-btn" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease quantity">&minus;</button>' +
+        '<span class="invoice-line-qty-value">' + line.qty + '</span>' +
+        '<button class="invoice-line-qty-btn" data-idx="' + idx + '" data-dir="1" aria-label="Increase quantity">+</button>' +
+      '</div>' +
+      '<span class="tax-badge ' + taxClass + '">' + taxLabel(line.tax_group) + '</span>' +
+      '<div class="invoice-line-total">€' + lineTotal + '</div>' +
+      '<button class="invoice-line-remove-btn" data-idx="' + idx + '" aria-label="Remove line">&times;</button>';
+    basketLinesEl.appendChild(div);
+  });
+
+  basketLinesEl.querySelectorAll('.invoice-line-price-input').forEach(function (input) {
+    input.addEventListener('input', async function () {
+      const idx = parseInt(input.getAttribute('data-idx'), 10);
+      const val = parseFloat(input.value.replace(',', '.'));
+      basketLines[idx].price = isNaN(val) ? 0 : val;
+      updateBasketSummary();
+      await db.order_items.update(basketLines[idx].id, { price: basketLines[idx].price });
+      await saveOrderTotal();
+    });
+  });
+
+  basketLinesEl.querySelectorAll('.invoice-line-price-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const dir = parseInt(btn.getAttribute('data-dir'), 10);
+      const current = basketLines[idx].price;
+      const next = Math.max(0, Math.round((current + dir * 0.05) * 100) / 100);
+      basketLines[idx].price = next;
+      await db.order_items.update(basketLines[idx].id, { price: next });
+      await saveOrderTotal();
+      renderBasketLines();
+    });
+  });
+
+  basketLinesEl.querySelectorAll('.invoice-line-qty-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const dir = parseInt(btn.getAttribute('data-dir'), 10);
+      const nextQty = Math.max(1, basketLines[idx].qty + dir);
+      basketLines[idx].qty = nextQty;
+      await db.order_items.update(basketLines[idx].id, { qty: nextQty });
+      await saveOrderTotal();
+      renderBasketLines();
+    });
+  });
+
+  basketLinesEl.querySelectorAll('.invoice-line-remove-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const line = basketLines[idx];
+      openConfirmModal('Are you sure you want to remove "' + (line ? line.name : 'this line') + '" from the basket?', 'Yes, remove', async function () {
+        await db.order_items.delete(line.id);
+        basketLines.splice(idx, 1);
+        await saveOrderTotal();
+        renderBasketLines();
+      });
+    });
+  });
+
+  updateBasketSummary();
 }
 
 basketScan.addEventListener('keydown', async function (e) {
@@ -231,19 +359,90 @@ basketScan.addEventListener('keydown', async function (e) {
   if (!code) return;
   const product = await db.products.get(code);
   if (!product) {
-    setStatus(basketStatus, 'Unknown barcode ' + code + ' — add it in Products first');
+    basketMessageEl.innerHTML = '<div class="msg-box warn">Unknown barcode ' + code + ' — add it in Products first.</div>';
     return;
   }
-  const existing = basket.find(function (l) { return l.barcode === code; });
+  basketMessageEl.innerHTML = '';
+  const existing = basketLines.find(function (l) { return l.barcode === code; });
   if (existing) {
     existing.qty += 1;
-    setStatus(basketStatus, product.name + ' quantity increased');
+    await db.order_items.update(existing.id, { qty: existing.qty });
   } else {
-    basket.push({ barcode: code, name: product.name, price: product.price, tax_group: product.tax_group, qty: 1 });
-    setStatus(basketStatus, product.name + ' added');
+    const itemId = await db.order_items.add({
+      order_id: currentOrderId,
+      barcode: code,
+      name: product.name,
+      price: product.price,
+      qty: 1,
+      tax_group: product.tax_group
+    });
+    basketLines.push({ id: itemId, barcode: code, name: product.name, price: product.price, qty: 1, tax_group: product.tax_group });
   }
-  renderBasket();
+  await saveOrderTotal();
+  renderBasketLines();
 });
+
+document.getElementById('void-basket-btn').addEventListener('click', function () {
+  if (basketLines.length === 0) return;
+  openConfirmModal('Are you sure you want to void this basket? All lines will be removed.', 'Yes, void', async function () {
+    await db.order_items.where('order_id').equals(currentOrderId).delete();
+    await db.orders.delete(currentOrderId);
+    currentOrderId = null;
+    basketLines = [];
+    await loadActiveOrCreateOrder();
+    basketMessageEl.innerHTML = '<div class="msg-box success">Basket voided.</div>';
+    basketScan.focus();
+  });
+});
+
+document.getElementById('confirm-order-btn').addEventListener('click', function () {
+  if (basketLines.length === 0) {
+    basketMessageEl.innerHTML = '<div class="msg-box error">Add at least one item before confirming the order.</div>';
+    return;
+  }
+  document.getElementById('payment-modal').style.display = 'flex';
+});
+
+async function finalizeOrder(paymentMethod) {
+  document.getElementById('payment-modal').style.display = 'none';
+  const total = basketLines.reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  await db.orders.update(currentOrderId, {
+    status: 'confirmed',
+    confirmed_at: new Date().toISOString(),
+    payment_method: paymentMethod,
+    total: total
+  });
+  currentOrderId = null;
+  basketLines = [];
+  await loadActiveOrCreateOrder();
+  basketMessageEl.innerHTML = '<div class="msg-box success">Order confirmed (' + (paymentMethod === 'cash' ? 'Cash' : 'PIN') + ').</div>';
+  basketScan.focus();
+}
+
+document.getElementById('payment-cash-btn').addEventListener('click', function () { finalizeOrder('cash'); });
+document.getElementById('payment-pin-btn').addEventListener('click', function () { finalizeOrder('pin'); });
+
+// ===================== TODAY'S SUMMARY =====================
+document.getElementById('today-summary-toggle-btn').addEventListener('click', async function () {
+  const body = document.getElementById('today-summary-body');
+  const isHidden = body.style.display === 'none';
+  if (isHidden) {
+    await refreshTodaySummary();
+  }
+  body.style.display = isHidden ? '' : 'none';
+});
+
+async function refreshTodaySummary() {
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const allOrders = await db.orders.where('status').equals('confirmed').toArray();
+  const todayOrders = allOrders.filter(function (o) { return o.confirmed_at && o.confirmed_at.slice(0, 10) === todayStr; });
+  const cash = todayOrders.filter(function (o) { return o.payment_method === 'cash'; }).reduce(function (s, o) { return s + o.total; }, 0);
+  const pin = todayOrders.filter(function (o) { return o.payment_method === 'pin'; }).reduce(function (s, o) { return s + o.total; }, 0);
+  document.getElementById('summary-cash').textContent = '€' + cash.toFixed(2);
+  document.getElementById('summary-pin').textContent = '€' + pin.toFixed(2);
+  document.getElementById('summary-total').textContent = '€' + (cash + pin).toFixed(2);
+  document.getElementById('summary-count').textContent = todayOrders.length;
+}
 
 // ===================== SHARED: PRODUCT FORM BUILDER =====================
 function supplierOptionsHtml(selected) {
@@ -264,6 +463,23 @@ function categoryOptionsHtml(selected) {
   }).join('');
 }
 
+function priceStepperField(label, id, val, readOnly) {
+  if (readOnly) {
+    return field(label, id, val, true);
+  }
+  const displayVal = (Number(val) || 0).toFixed(2);
+  return '<div class="field"><label>' + label + '</label>' +
+    '<div class="price-stepper">' +
+      '<button type="button" class="price-stepper-btn" data-target="' + id + '" data-dir="-1" aria-label="Decrease price">&minus;</button>' +
+      '<div class="price-stepper-wrap">' +
+        '<span class="price-stepper-currency">€</span>' +
+        '<input type="text" inputmode="decimal" id="' + id + '" value="' + displayVal + '" />' +
+      '</div>' +
+      '<button type="button" class="price-stepper-btn" data-target="' + id + '" data-dir="1" aria-label="Increase price">+</button>' +
+    '</div>' +
+  '</div>';
+}
+
 // Renders an editable or read-only product form. Returns the container HTML string.
 // prefix scopes all element IDs (e.g. 'manage-' or 'add-') so the two forms never collide
 // even if both panels have rendered content in the DOM at the same time.
@@ -275,7 +491,7 @@ function buildProductFormHtml(p, readOnly, showCancel, prefix) {
     field('Barcode', prefix + 'f-barcode', p.barcode, true) +
     field('SKU', prefix + 'f-sku', p.sku || '', readOnly) +
     field('Name', prefix + 'f-name', p.name || '', readOnly) +
-    field('Price (€)', prefix + 'f-price', p.price != null ? p.price : '', readOnly, 'number') +
+    priceStepperField('Price (€)', prefix + 'f-price', p.price != null ? p.price : '', readOnly) +
     field('Cost price (€)', prefix + 'f-cost_price', p.cost_price != null ? p.cost_price : '', readOnly, 'number') +
     selectField('Category', prefix + 'f-category', categoryOptionsHtml(p.category), readOnly) +
     selectField('Tax group', prefix + 'f-tax_group', taxOptionsHtml(p.tax_group), readOnly) +
@@ -490,12 +706,34 @@ async function renderProductList() {
       if (c.key === 'tax_group') val = taxLabel(val);
       if (c.key === 'supplier_id') val = supplierMap[val] || val;
       if (c.key === 'date_added' || c.key === 'date_modified') val = fmtDate(val);
-      if (c.key === 'price' || c.key === 'cost_price') val = val != null ? '€' + Number(val).toFixed(2) : '';
+      if (c.key === 'cost_price') val = val != null ? '€' + Number(val).toFixed(2) : '';
+      if (c.key === 'price') {
+        return '<td><div class="grid-price-stepper">' +
+          '<button class="grid-price-btn" data-barcode="' + p.barcode + '" data-dir="-1" aria-label="Decrease price">&minus;</button>' +
+          '<span class="grid-price-value">€' + Number(p.price || 0).toFixed(2) + '</span>' +
+          '<button class="grid-price-btn" data-barcode="' + p.barcode + '" data-dir="1" aria-label="Increase price">+</button>' +
+        '</div></td>';
+      }
       return '<td>' + (val === undefined || val === null ? '' : val) + '</td>';
     }).join('') +
     '<td><button class="edit-row-btn" data-barcode="' + p.barcode + '">Edit</button>' +
     '<button class="delete-row-btn" data-barcode="' + p.barcode + '">Delete</button></td></tr>';
   }).join('');
+
+  document.querySelectorAll('.grid-price-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function () {
+      const barcode = btn.getAttribute('data-barcode');
+      const dir = parseInt(btn.getAttribute('data-dir'), 10);
+      const product = await db.products.get(barcode);
+      if (!product) return;
+      const current = Number(product.price) || 0;
+      const next = Math.max(0, Math.round((current + dir * 0.01) * 100) / 100);
+      product.price = next;
+      product.date_modified = new Date().toISOString();
+      await db.products.put(product);
+      renderProductList();
+    });
+  });
 
   document.querySelectorAll('.edit-row-btn').forEach(function (btn) {
     btn.addEventListener('click', async function () {
@@ -574,7 +812,7 @@ exportBtn.addEventListener('click', async function () {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = 'product-catalog-export.csv';
+  a.download = 'product-catalog-export-' + new Date().toISOString().slice(0, 10) + '.csv';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -720,7 +958,7 @@ const DEFAULT_SETTINGS_VALUES = {
   address_line2: "'s-Hertogenbosch, 5224 EJ",
   kvk: '90556682',
   vat_number: 'NL004825060B75',
-  iban: '',
+  iban: 'NL95 RABO 0360 6296 01',
   bic: 'RABONL2U'
 };
 
@@ -813,7 +1051,7 @@ document.getElementById('settings-backup-btn').addEventListener('click', async f
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'settings-backup.json';
+    a.download = 'settings-backup-' + new Date().toISOString().slice(0, 10) + '.json';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -846,25 +1084,95 @@ async function refreshInvoiceNumberPreview() {
     formatInvoiceNumber(year, nextSeq) + ' (assigned on approval)';
 }
 
-function renderInvoiceLines() {
-  invoiceLinesEl.innerHTML = '';
-  invoiceEmptyEl.style.display = invoiceLines.length === 0 ? '' : 'none';
-  invoiceLines.forEach(function (line) {
-    const div = document.createElement('div');
-    div.className = 'basket-line';
-    const lineTotal = (line.price * line.qty).toFixed(2);
-    div.innerHTML =
-      '<div><div class="name">' + line.description + '</div><div class="meta">' + line.qty + ' x €' + line.price.toFixed(2) + ' · ' + taxLabel(line.tax_group) + '</div></div>' +
-      '<div class="line-total">€' + lineTotal + '</div>';
-    invoiceLinesEl.appendChild(div);
-  });
+function updateInvoiceSummary() {
   const sub21 = invoiceLines.filter(function (l) { return l.tax_group === 'R21'; }).reduce(function (s, l) { return s + l.price * l.qty; }, 0);
   const sub9 = invoiceLines.filter(function (l) { return l.tax_group === 'R9'; }).reduce(function (s, l) { return s + l.price * l.qty; }, 0);
-  const items = invoiceLines.reduce(function (s, l) { return s + l.qty; }, 0);
+  const lineCount = invoiceLines.length;
   invoiceSub21El.textContent = '€' + sub21.toFixed(2);
   invoiceSub9El.textContent = '€' + sub9.toFixed(2);
   invoiceTotalEl.textContent = '€' + (sub21 + sub9).toFixed(2);
-  invoiceCountEl.textContent = items + (items === 1 ? ' line' : ' lines');
+  invoiceCountEl.textContent = lineCount + (lineCount === 1 ? ' line' : ' lines');
+}
+
+function updateInvoiceLineTotalsOnly() {
+  const totalEls = invoiceLinesEl.querySelectorAll('.invoice-line-total');
+  invoiceLines.forEach(function (line, idx) {
+    if (totalEls[idx]) totalEls[idx].textContent = '€' + (line.price * line.qty).toFixed(2);
+  });
+  updateInvoiceSummary();
+}
+
+function renderInvoiceLines() {
+  invoiceLinesEl.innerHTML = '';
+  invoiceEmptyEl.style.display = invoiceLines.length === 0 ? '' : 'none';
+
+  invoiceLines.forEach(function (line, idx) {
+    const div = document.createElement('div');
+    div.className = 'invoice-line-card';
+    const lineTotal = (line.price * line.qty).toFixed(2);
+    const taxClass = line.tax_group === 'R21' ? 'r21' : 'r9';
+    div.innerHTML =
+      '<div class="invoice-line-name">' + line.description + '</div>' +
+      '<div class="invoice-line-price-stepper">' +
+        '<button class="invoice-line-price-btn" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease price">&minus;</button>' +
+        '<div class="invoice-line-price-wrap">' +
+          '<span class="invoice-line-currency">€</span>' +
+          '<input type="text" inputmode="decimal" class="invoice-line-price-input" data-idx="' + idx + '" value="' + line.price.toFixed(2) + '" />' +
+        '</div>' +
+        '<button class="invoice-line-price-btn" data-idx="' + idx + '" data-dir="1" aria-label="Increase price">+</button>' +
+      '</div>' +
+      '<div class="invoice-line-qty-stepper">' +
+        '<button class="invoice-line-qty-btn" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease quantity">&minus;</button>' +
+        '<span class="invoice-line-qty-value">' + line.qty + '</span>' +
+        '<button class="invoice-line-qty-btn" data-idx="' + idx + '" data-dir="1" aria-label="Increase quantity">+</button>' +
+      '</div>' +
+      '<span class="tax-badge ' + taxClass + '">' + taxLabel(line.tax_group) + '</span>' +
+      '<div class="invoice-line-total">€' + lineTotal + '</div>' +
+      '<button class="invoice-line-remove-btn" data-idx="' + idx + '" aria-label="Remove line">&times;</button>';
+    invoiceLinesEl.appendChild(div);
+  });
+
+  invoiceLinesEl.querySelectorAll('.invoice-line-price-input').forEach(function (input) {
+    input.addEventListener('input', function () {
+      const idx = parseInt(input.getAttribute('data-idx'), 10);
+      const val = parseFloat(input.value.replace(',', '.'));
+      invoiceLines[idx].price = isNaN(val) ? 0 : val;
+      updateInvoiceLineTotalsOnly();
+    });
+  });
+
+  invoiceLinesEl.querySelectorAll('.invoice-line-price-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const dir = parseInt(btn.getAttribute('data-dir'), 10);
+      const current = invoiceLines[idx].price;
+      const next = Math.max(0, Math.round((current + dir * 0.05) * 100) / 100);
+      invoiceLines[idx].price = next;
+      renderInvoiceLines();
+    });
+  });
+
+  invoiceLinesEl.querySelectorAll('.invoice-line-qty-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const dir = parseInt(btn.getAttribute('data-dir'), 10);
+      invoiceLines[idx].qty = Math.max(1, invoiceLines[idx].qty + dir);
+      renderInvoiceLines();
+    });
+  });
+
+  invoiceLinesEl.querySelectorAll('.invoice-line-remove-btn').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const line = invoiceLines[idx];
+      openConfirmModal('Are you sure you want to remove "' + (line ? line.description : 'this line') + '" from the invoice?', 'Yes, remove', function () {
+        invoiceLines.splice(idx, 1);
+        renderInvoiceLines();
+      });
+    });
+  });
+
+  updateInvoiceSummary();
 }
 
 invoiceScan.addEventListener('keydown', async function (e) {
@@ -944,11 +1252,26 @@ function buildInvoiceDocContent(doc, invoiceRecord, items, settings) {
   doc.setDrawColor(BLUE[0], BLUE[1], BLUE[2]);
   doc.setLineWidth(0.6);
   doc.line(20, y, 190, y);
-  y += 8;
+  y += 10;
 
-  doc.text('Factuurnummer: ' + (invoiceRecord.invoice_number || '(concept)'), 20, y);
-  doc.text('Datum: ' + invoiceRecord.invoice_date, 130, y);
-  y += 18;
+  const blockStartY = y;
+  let leftY = blockStartY;
+  if (invoiceRecord.buyer_name || invoiceRecord.buyer_address_line1 || invoiceRecord.buyer_address_line2) {
+    doc.setFont(undefined, 'normal');
+    if (invoiceRecord.buyer_name) { doc.text(invoiceRecord.buyer_name, 20, leftY); leftY += 6; }
+    if (invoiceRecord.buyer_address_line1) { doc.text(invoiceRecord.buyer_address_line1, 20, leftY); leftY += 6; }
+    if (invoiceRecord.buyer_address_line2) { doc.text(invoiceRecord.buyer_address_line2, 20, leftY); leftY += 6; }
+  }
+
+  let rightY = blockStartY;
+  doc.text('Factuurnummer:', 130, rightY);
+  doc.text(invoiceRecord.invoice_number || '(concept)', 165, rightY);
+  rightY += 6;
+  doc.text('Datum:', 130, rightY);
+  doc.text(invoiceRecord.invoice_date, 165, rightY);
+  rightY += 6;
+
+  y = Math.max(leftY, rightY) + 10;
 
   doc.setFontSize(10);
   doc.setFont(undefined, 'bold');
@@ -1082,6 +1405,9 @@ document.getElementById('invoice-generate-btn').addEventListener('click', async 
     invoice_number: null,
     status: 'pending',
     invoice_date: invoiceDateEl.value,
+    buyer_name: document.getElementById('invoice-buyer-name').value.trim(),
+    buyer_address_line1: document.getElementById('invoice-buyer-address1').value.trim(),
+    buyer_address_line2: document.getElementById('invoice-buyer-address2').value.trim(),
     total: sub21 + sub9,
     sub21: sub21,
     sub9: sub9,
@@ -1103,6 +1429,9 @@ document.getElementById('invoice-generate-btn').addEventListener('click', async 
   invoiceLines = [];
   renderInvoiceLines();
   invoiceDateEl.value = new Date().toISOString().slice(0, 10);
+  document.getElementById('invoice-buyer-name').value = '';
+  document.getElementById('invoice-buyer-address1').value = '';
+  document.getElementById('invoice-buyer-address2').value = '';
   refreshInvoiceNumberPreview();
 });
 
@@ -1153,10 +1482,138 @@ function downloadTextFile(filename, content, mimeType) {
 document.getElementById('invoice-backup-btn').addEventListener('click', async function () {
   const invoices = await db.invoices.toArray();
   const items = await db.invoice_items.toArray();
-  const invoiceCols = ['id', 'invoice_number', 'status', 'invoice_date', 'total', 'sub21', 'sub9', 'created_at'];
+  const invoiceCols = ['id', 'invoice_number', 'status', 'invoice_date', 'buyer_name', 'buyer_address_line1', 'buyer_address_line2', 'total', 'sub21', 'sub9', 'created_at'];
   const itemCols = ['id', 'invoice_id', 'barcode', 'description', 'qty', 'price', 'tax_group'];
-  downloadTextFile('invoices-backup.csv', csvFromRows(invoices, invoiceCols));
-  downloadTextFile('invoice-items-backup.csv', csvFromRows(items, itemCols));
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const combined =
+    '## INVOICES\n' + csvFromRows(invoices, invoiceCols) +
+    '\n\n## INVOICE_ITEMS\n' + csvFromRows(items, itemCols);
+  downloadTextFile('invoice-backup-' + dateStamp + '.csv', combined);
+});
+
+// ===================== INVOICE: RESTORE FROM BACKUP =====================
+let selectedBackupFile = null;
+
+document.getElementById('select-backup-file-btn').addEventListener('click', function () {
+  document.getElementById('import-backup-file').click();
+});
+document.getElementById('import-backup-file').addEventListener('change', function (e) {
+  selectedBackupFile = e.target.files[0] || null;
+  document.getElementById('backup-file-name').textContent = selectedBackupFile ? selectedBackupFile.name : 'No file selected';
+});
+
+document.getElementById('invoice-restore-btn').addEventListener('click', async function () {
+  const msgEl = document.getElementById('invoice-restore-message');
+  try {
+    if (!selectedBackupFile) {
+      msgEl.innerHTML = '<div class="msg-box error">Select a backup file before restoring.</div>';
+      return;
+    }
+
+    const fullText = await selectedBackupFile.text();
+    const invoicesMarker = '## INVOICES';
+    const itemsMarker = '## INVOICE_ITEMS';
+    const invoicesIdx = fullText.indexOf(invoicesMarker);
+    const itemsIdx = fullText.indexOf(itemsMarker);
+    if (invoicesIdx === -1 || itemsIdx === -1) {
+      msgEl.innerHTML = '<div class="msg-box error">This doesn\'t look like a valid invoice backup file.</div>';
+      return;
+    }
+    const invoicesText = fullText.slice(invoicesIdx + invoicesMarker.length, itemsIdx).trim();
+    const itemsText = fullText.slice(itemsIdx + itemsMarker.length).trim();
+
+    const invoiceRows = parseCSV(invoicesText);
+    const itemRows = parseCSV(itemsText);
+    if (invoiceRows.length === 0 || itemRows.length === 0) {
+      msgEl.innerHTML = '<div class="msg-box warn">The backup file appears to contain no invoices.</div>';
+      return;
+    }
+
+    const invHeader = invoiceRows[0];
+    const invIdx = {};
+    ['id', 'invoice_number', 'status', 'invoice_date', 'buyer_name', 'buyer_address_line1', 'buyer_address_line2', 'total', 'sub21', 'sub9', 'created_at'].forEach(function (c) {
+      invIdx[c] = invHeader.indexOf(c);
+    });
+    if (invIdx.id === -1) {
+      msgEl.innerHTML = '<div class="msg-box error">Invoices file is missing an "id" column — is this the right file?</div>';
+      return;
+    }
+
+    const itemHeader = itemRows[0];
+    const itemIdx = {};
+    ['id', 'invoice_id', 'barcode', 'description', 'qty', 'price', 'tax_group'].forEach(function (c) {
+      itemIdx[c] = itemHeader.indexOf(c);
+    });
+    if (itemIdx.invoice_id === -1) {
+      msgEl.innerHTML = '<div class="msg-box error">Items file is missing an "invoice_id" column — is this the right file?</div>';
+      return;
+    }
+
+    let invoicesRestored = 0;
+    for (let i = 1; i < invoiceRows.length; i++) {
+      const r = invoiceRows[i];
+      const idVal = parseInt(r[invIdx.id], 10);
+      if (isNaN(idVal)) continue;
+      await db.invoices.put({
+        id: idVal,
+        invoice_number: invIdx.invoice_number !== -1 ? (r[invIdx.invoice_number] || null) : null,
+        status: invIdx.status !== -1 ? (r[invIdx.status] || 'pending') : 'pending',
+        invoice_date: invIdx.invoice_date !== -1 ? r[invIdx.invoice_date] : '',
+        buyer_name: invIdx.buyer_name !== -1 ? r[invIdx.buyer_name] : '',
+        buyer_address_line1: invIdx.buyer_address_line1 !== -1 ? r[invIdx.buyer_address_line1] : '',
+        buyer_address_line2: invIdx.buyer_address_line2 !== -1 ? r[invIdx.buyer_address_line2] : '',
+        total: parseFloat(r[invIdx.total]) || 0,
+        sub21: parseFloat(r[invIdx.sub21]) || 0,
+        sub9: parseFloat(r[invIdx.sub9]) || 0,
+        created_at: invIdx.created_at !== -1 ? r[invIdx.created_at] : new Date().toISOString()
+      });
+      invoicesRestored++;
+    }
+
+    let itemsRestored = 0;
+    for (let i = 1; i < itemRows.length; i++) {
+      const r = itemRows[i];
+      const invoiceIdVal = parseInt(r[itemIdx.invoice_id], 10);
+      if (isNaN(invoiceIdVal)) continue;
+      const record = {
+        invoice_id: invoiceIdVal,
+        barcode: itemIdx.barcode !== -1 ? (r[itemIdx.barcode] || null) : null,
+        description: itemIdx.description !== -1 ? r[itemIdx.description] : '',
+        qty: parseInt(r[itemIdx.qty], 10) || 1,
+        price: parseFloat(r[itemIdx.price]) || 0,
+        tax_group: itemIdx.tax_group !== -1 ? r[itemIdx.tax_group] : ''
+      };
+      if (itemIdx.id !== -1) {
+        const idVal = parseInt(r[itemIdx.id], 10);
+        if (!isNaN(idVal)) record.id = idVal;
+      }
+      await db.invoice_items.put(record);
+      itemsRestored++;
+    }
+
+    // Reconcile year counters so future approvals never collide with a restored number
+    const s = await getSettings();
+    const allInvoices = await db.invoices.toArray();
+    allInvoices.forEach(function (inv) {
+      if (inv.invoice_number) {
+        const parts = inv.invoice_number.split('-');
+        if (parts.length === 2) {
+          const yr = parts[0];
+          const seq = parseInt(parts[1], 10);
+          if (!isNaN(seq)) {
+            s.counters[yr] = Math.max(s.counters[yr] || 0, seq);
+          }
+        }
+      }
+    });
+    await db.settings.put(s);
+
+    msgEl.innerHTML = '<div class="msg-box success">Restored ' + invoicesRestored + ' invoice(s) and ' + itemsRestored + ' line item(s).</div>';
+    renderInvoiceHistory();
+    refreshInvoiceNumberPreview();
+  } catch (err) {
+    msgEl.innerHTML = '<div class="msg-box error">Restore failed: ' + (err.message || err) + '</div>';
+  }
 });
 
 async function renderInvoiceHistory() {
@@ -1206,12 +1663,465 @@ async function renderInvoiceHistory() {
   });
 }
 
+// ===================== GLOBAL PRICE STEPPER (Add/Manage Product forms) =====================
+document.addEventListener('click', function (e) {
+  const btn = e.target.closest('.price-stepper-btn');
+  if (!btn) return;
+  const targetId = btn.getAttribute('data-target');
+  const input = document.getElementById(targetId);
+  if (!input) return;
+  const dir = parseInt(btn.getAttribute('data-dir'), 10);
+  const current = parseFloat(String(input.value).replace(',', '.')) || 0;
+  const next = Math.max(0, Math.round((current + dir * 0.01) * 100) / 100);
+  input.value = next.toFixed(2);
+});
+
+// ===================== ORDER HISTORY =====================
+let expandedDates = new Set();
+let expandedOrderId = null;
+let orderEditWorkingCopy = null;
+let removedItemIds = [];
+let orderEditPaymentMethod = null;
+let pendingHistoryMessage = null;
+
+function formatDateLong(dateKey) {
+  if (!dateKey) return 'Unknown date';
+  const d = new Date(dateKey + 'T00:00:00');
+  return d.toLocaleDateString(undefined, { weekday: undefined, year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+function renderOrderDetailHtml(orderId, items) {
+  let html = '<div class="card" style="margin-top:8px; background:var(--surface-tint);">';
+  items.forEach(function (item, idx) {
+    const lineTotal = (item.price * item.qty).toFixed(2);
+    html +=
+      '<div class="invoice-line-card">' +
+        '<div class="invoice-line-name">' + item.name + '</div>' +
+        '<div class="invoice-line-price-stepper">' +
+          '<button class="history-item-price-btn" data-order="' + orderId + '" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease price">&minus;</button>' +
+          '<div class="invoice-line-price-wrap">' +
+            '<span class="invoice-line-currency">€</span>' +
+            '<input type="text" inputmode="decimal" class="invoice-line-price-input history-item-price-input" data-order="' + orderId + '" data-idx="' + idx + '" value="' + item.price.toFixed(2) + '" />' +
+          '</div>' +
+          '<button class="history-item-price-btn" data-order="' + orderId + '" data-idx="' + idx + '" data-dir="1" aria-label="Increase price">+</button>' +
+        '</div>' +
+        '<div class="invoice-line-qty-stepper">' +
+          '<button class="history-item-qty-btn" data-order="' + orderId + '" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease quantity">&minus;</button>' +
+          '<span class="invoice-line-qty-value">' + item.qty + '</span>' +
+          '<button class="history-item-qty-btn" data-order="' + orderId + '" data-idx="' + idx + '" data-dir="1" aria-label="Increase quantity">+</button>' +
+        '</div>' +
+        '<select class="history-item-tax-select" data-order="' + orderId + '" data-idx="' + idx + '">' +
+          '<option value="R21"' + (item.tax_group === 'R21' ? ' selected' : '') + '>21%</option>' +
+          '<option value="R9"' + (item.tax_group === 'R9' ? ' selected' : '') + '>9%</option>' +
+        '</select>' +
+        '<div class="invoice-line-total">€' + lineTotal + '</div>' +
+        '<button class="invoice-line-remove-btn history-item-remove-btn" data-order="' + orderId + '" data-idx="' + idx + '" aria-label="Remove line">&times;</button>' +
+      '</div>';
+  });
+  const total = items.reduce(function (s, it) { return s + it.price * it.qty; }, 0);
+  html +=
+    '<div class="row" style="align-items:center; padding:8px 4px;">' +
+      '<span>Payment method</span>' +
+      '<select class="history-payment-select" data-order="' + orderId + '">' +
+        '<option value="cash"' + (orderEditPaymentMethod === 'cash' ? ' selected' : '') + '>Cash</option>' +
+        '<option value="pin"' + (orderEditPaymentMethod === 'pin' ? ' selected' : '') + '>PIN</option>' +
+      '</select>' +
+    '</div>' +
+    '<div class="row" style="font-weight:500; color:var(--ink); padding:8px 4px;"><span>Order total</span><span>€' + total.toFixed(2) + '</span></div>' +
+    '<div class="split">' +
+      '<button class="btn btn-sm history-save-btn" data-order="' + orderId + '">Save</button>' +
+      '<button class="btn btn-sm history-delete-btn" data-order="' + orderId + '">Delete</button>' +
+    '</div>' +
+  '</div>';
+  return html;
+}
+
+async function renderOrderHistory() {
+  const allOrders = await db.orders.where('status').equals('confirmed').toArray();
+  allOrders.sort(function (a, b) { return (b.confirmed_at || '').localeCompare(a.confirmed_at || ''); });
+
+  document.getElementById('basket-history-count').textContent = allOrders.length;
+  document.getElementById('basket-history-empty').style.display = allOrders.length === 0 ? '' : 'none';
+
+  const msgEl = document.getElementById('basket-history-message');
+  if (pendingHistoryMessage) {
+    msgEl.innerHTML = '<div class="msg-box success">' + pendingHistoryMessage + '</div>';
+    pendingHistoryMessage = null;
+  } else {
+    msgEl.innerHTML = '';
+  }
+
+  const groups = {};
+  allOrders.forEach(function (o) {
+    const dateKey = (o.confirmed_at || '').slice(0, 10);
+    if (!groups[dateKey]) groups[dateKey] = [];
+    groups[dateKey].push(o);
+  });
+  const dateKeys = Object.keys(groups).sort().reverse();
+
+  const container = document.getElementById('basket-history-groups');
+  container.innerHTML = '';
+
+  dateKeys.forEach(function (dateKey) {
+    const ordersForDate = groups[dateKey];
+    const dayTotal = ordersForDate.reduce(function (s, o) { return s + o.total; }, 0);
+    const isExpanded = expandedDates.has(dateKey);
+
+    const dateDiv = document.createElement('div');
+    dateDiv.className = 'card';
+    let html =
+      '<button class="history-date-toggle" data-date="' + dateKey + '" style="width:100%; text-align:left; background:var(--surface-tint); border:1px solid var(--border); border-radius:var(--radius); padding:12px 14px; font-size:15px; font-weight:500; color:var(--ink); display:flex; justify-content:space-between; cursor:pointer;">' +
+        '<span>' + formatDateLong(dateKey) + '</span>' +
+        '<span>' + ordersForDate.length + (ordersForDate.length === 1 ? ' order' : ' orders') + ' · €' + dayTotal.toFixed(2) + '</span>' +
+      '</button>';
+
+    if (isExpanded) {
+      html += '<div style="margin-top:12px;">';
+      ordersForDate.forEach(function (o) {
+        const timeStr = o.confirmed_at ? new Date(o.confirmed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+        const payClass = o.payment_method === 'cash' ? 'r9' : 'r21';
+        const payLabel = o.payment_method === 'cash' ? 'Cash' : 'PIN';
+        const exportedBadge = o.exported ? ' <span class="status-badge approved">Exported</span>' : '';
+        const editedBadge = o.edited_at ? ' <span class="status-badge pending">Edited</span>' : '';
+        html +=
+          '<div class="history-order-row" data-order-id="' + o.id + '" style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); cursor:pointer;">' +
+            '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
+              '<span>' + timeStr + '</span>' +
+              '<span class="tax-badge ' + payClass + '">' + payLabel + '</span>' +
+              exportedBadge + editedBadge +
+            '</div>' +
+            '<div style="font-weight:500;">€' + o.total.toFixed(2) + '</div>' +
+          '</div>';
+        if (expandedOrderId === o.id && orderEditWorkingCopy) {
+          html += renderOrderDetailHtml(o.id, orderEditWorkingCopy);
+        }
+      });
+      html += '</div>';
+    }
+
+    dateDiv.innerHTML = html;
+    container.appendChild(dateDiv);
+  });
+
+  container.querySelectorAll('.history-date-toggle').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      const d = btn.getAttribute('data-date');
+      if (expandedDates.has(d)) { expandedDates.delete(d); } else { expandedDates.add(d); }
+      renderOrderHistory();
+    });
+  });
+
+  container.querySelectorAll('.history-order-row').forEach(function (row) {
+    row.addEventListener('click', async function () {
+      const id = parseInt(row.getAttribute('data-order-id'), 10);
+      if (expandedOrderId === id) {
+        expandedOrderId = null;
+        orderEditWorkingCopy = null;
+        removedItemIds = [];
+        orderEditPaymentMethod = null;
+      } else {
+        expandedOrderId = id;
+        const items = await db.order_items.where('order_id').equals(id).toArray();
+        orderEditWorkingCopy = items.map(function (it) { return Object.assign({}, it); });
+        removedItemIds = [];
+        const orderRecord = await db.orders.get(id);
+        orderEditPaymentMethod = orderRecord ? orderRecord.payment_method : null;
+      }
+      renderOrderHistory();
+    });
+  });
+
+  container.querySelectorAll('.history-item-price-input').forEach(function (input) {
+    input.addEventListener('change', function () {
+      const idx = parseInt(input.getAttribute('data-idx'), 10);
+      const val = parseFloat(input.value.replace(',', '.'));
+      orderEditWorkingCopy[idx].price = isNaN(val) ? 0 : val;
+      renderOrderHistory();
+    });
+    input.addEventListener('click', function (e) { e.stopPropagation(); });
+  });
+
+  container.querySelectorAll('.history-item-price-btn').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const dir = parseInt(btn.getAttribute('data-dir'), 10);
+      const current = orderEditWorkingCopy[idx].price;
+      orderEditWorkingCopy[idx].price = Math.max(0, Math.round((current + dir * 0.05) * 100) / 100);
+      renderOrderHistory();
+    });
+  });
+
+  container.querySelectorAll('.history-item-qty-btn').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const dir = parseInt(btn.getAttribute('data-dir'), 10);
+      orderEditWorkingCopy[idx].qty = Math.max(1, orderEditWorkingCopy[idx].qty + dir);
+      renderOrderHistory();
+    });
+  });
+
+  container.querySelectorAll('.history-item-tax-select').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      const idx = parseInt(sel.getAttribute('data-idx'), 10);
+      orderEditWorkingCopy[idx].tax_group = sel.value;
+      renderOrderHistory();
+    });
+    sel.addEventListener('click', function (e) { e.stopPropagation(); });
+  });
+
+  container.querySelectorAll('.history-item-remove-btn').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const idx = parseInt(btn.getAttribute('data-idx'), 10);
+      const item = orderEditWorkingCopy[idx];
+      openConfirmModal('Are you sure you want to remove "' + (item ? item.name : 'this line') + '" from the order? Click Save afterward to make this permanent.', 'Yes, remove', function () {
+        if (item && item.id !== undefined) { removedItemIds.push(item.id); }
+        orderEditWorkingCopy.splice(idx, 1);
+        renderOrderHistory();
+      });
+    });
+  });
+
+  container.querySelectorAll('.history-payment-select').forEach(function (sel) {
+    sel.addEventListener('change', function () {
+      orderEditPaymentMethod = sel.value;
+    });
+    sel.addEventListener('click', function (e) { e.stopPropagation(); });
+  });
+
+  container.querySelectorAll('.history-save-btn').forEach(function (btn) {
+    btn.addEventListener('click', async function (e) {
+      e.stopPropagation();
+      const orderId = parseInt(btn.getAttribute('data-order'), 10);
+
+      if (orderEditWorkingCopy.length === 0) {
+        openConfirmModal('This order will have no items left. Delete the order entirely?', 'Yes, delete order', async function () {
+          await db.order_items.where('order_id').equals(orderId).delete();
+          await db.orders.delete(orderId);
+          expandedOrderId = null;
+          orderEditWorkingCopy = null;
+          removedItemIds = [];
+          orderEditPaymentMethod = null;
+          pendingHistoryMessage = 'Order deleted.';
+          renderOrderHistory();
+        });
+        return;
+      }
+
+      for (const id of removedItemIds) {
+        await db.order_items.delete(id);
+      }
+      for (const item of orderEditWorkingCopy) {
+        await db.order_items.put(item);
+      }
+      const total = orderEditWorkingCopy.reduce(function (s, it) { return s + it.price * it.qty; }, 0);
+      await db.orders.update(orderId, { total: total, edited_at: new Date().toISOString(), payment_method: orderEditPaymentMethod });
+      expandedOrderId = null;
+      orderEditWorkingCopy = null;
+      removedItemIds = [];
+      orderEditPaymentMethod = null;
+      pendingHistoryMessage = 'Order changes saved.';
+      renderOrderHistory();
+    });
+  });
+
+  container.querySelectorAll('.history-delete-btn').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const orderId = parseInt(btn.getAttribute('data-order'), 10);
+      openConfirmModal('Are you sure you want to delete this order? This cannot be undone.', 'Yes, delete', async function () {
+        await db.order_items.where('order_id').equals(orderId).delete();
+        await db.orders.delete(orderId);
+        expandedOrderId = null;
+        orderEditWorkingCopy = null;
+        removedItemIds = [];
+        orderEditPaymentMethod = null;
+        pendingHistoryMessage = 'Order deleted.';
+        renderOrderHistory();
+      });
+    });
+  });
+}
+
+// ===================== ORDER EXPORT =====================
+async function exportOrders(orderList) {
+  const orderCols = ['id', 'created_at', 'confirmed_at', 'total', 'payment_method', 'status', 'edited_at', 'exported', 'exported_at'];
+  const itemCols = ['id', 'order_id', 'barcode', 'name', 'price', 'qty', 'tax_group', 'price_excl_tax'];
+
+  const orderIds = orderList.map(function (o) { return o.id; });
+  const allItems = await db.order_items.where('order_id').anyOf(orderIds).toArray();
+  const itemsWithExclTax = allItems.map(function (it) {
+    const frac = taxRateFraction(it.tax_group);
+    return Object.assign({}, it, { price_excl_tax: Math.round((it.price / (1 + frac)) * 100) / 100 });
+  });
+
+  const dateStamp = new Date().toISOString().slice(0, 10);
+  const combined =
+    '## ORDERS\n' + csvFromRows(orderList, orderCols) +
+    '\n\n## ORDER_ITEMS\n' + csvFromRows(itemsWithExclTax, itemCols);
+  downloadTextFile('order-backup-' + dateStamp + '.csv', combined);
+
+  for (const id of orderIds) {
+    await db.orders.update(id, { exported: true, exported_at: new Date().toISOString() });
+  }
+}
+
+document.getElementById('order-export-toggle-btn').addEventListener('click', function () {
+  const body = document.getElementById('order-export-body');
+  body.style.display = body.style.display === 'none' ? '' : 'none';
+});
+
+document.getElementById('order-export-new-btn').addEventListener('click', async function () {
+  const statusEl = document.getElementById('order-export-status');
+  const allOrders = await db.orders.where('status').equals('confirmed').toArray();
+  const newOrders = allOrders.filter(function (o) { return !o.exported; });
+  if (newOrders.length === 0) {
+    statusEl.textContent = 'No new sales to export.';
+    setTimeout(function () { statusEl.textContent = ''; }, 2500);
+    return;
+  }
+  await exportOrders(newOrders);
+  statusEl.textContent = 'Exported ' + newOrders.length + ' new order(s).';
+  setTimeout(function () { statusEl.textContent = ''; }, 2500);
+  renderOrderHistory();
+});
+
+document.getElementById('order-export-range-btn').addEventListener('click', async function () {
+  const statusEl = document.getElementById('order-export-status');
+  const from = document.getElementById('order-export-from').value;
+  const to = document.getElementById('order-export-to').value;
+  if (!from || !to) {
+    statusEl.textContent = 'Pick both a from and to date.';
+    setTimeout(function () { statusEl.textContent = ''; }, 2500);
+    return;
+  }
+  const allOrders = await db.orders.where('status').equals('confirmed').toArray();
+  const rangeOrders = allOrders.filter(function (o) {
+    const d = (o.confirmed_at || '').slice(0, 10);
+    return d >= from && d <= to;
+  });
+  if (rangeOrders.length === 0) {
+    statusEl.textContent = 'No confirmed orders in that date range.';
+    setTimeout(function () { statusEl.textContent = ''; }, 2500);
+    return;
+  }
+  await exportOrders(rangeOrders);
+  statusEl.textContent = 'Exported ' + rangeOrders.length + ' order(s) from ' + from + ' to ' + to + '.';
+  setTimeout(function () { statusEl.textContent = ''; }, 2500);
+  renderOrderHistory();
+});
+
+// ===================== ORDER RESTORE FROM BACKUP =====================
+let selectedOrderBackupFile = null;
+
+document.getElementById('select-order-backup-file-btn').addEventListener('click', function () {
+  document.getElementById('import-order-backup-file').click();
+});
+document.getElementById('import-order-backup-file').addEventListener('change', function (e) {
+  selectedOrderBackupFile = e.target.files[0] || null;
+  document.getElementById('order-backup-file-name').textContent = selectedOrderBackupFile ? selectedOrderBackupFile.name : 'No file selected';
+});
+
+document.getElementById('order-restore-btn').addEventListener('click', async function () {
+  const msgEl = document.getElementById('order-restore-message');
+  try {
+    if (!selectedOrderBackupFile) {
+      msgEl.innerHTML = '<div class="msg-box error">Select a backup file before restoring.</div>';
+      return;
+    }
+    const fullText = await selectedOrderBackupFile.text();
+    const ordersMarker = '## ORDERS';
+    const itemsMarker = '## ORDER_ITEMS';
+    const ordersIdx = fullText.indexOf(ordersMarker);
+    const itemsIdx = fullText.indexOf(itemsMarker);
+    if (ordersIdx === -1 || itemsIdx === -1) {
+      msgEl.innerHTML = '<div class="msg-box error">This doesn\'t look like a valid order backup file.</div>';
+      return;
+    }
+    const ordersText = fullText.slice(ordersIdx + ordersMarker.length, itemsIdx).trim();
+    const itemsText = fullText.slice(itemsIdx + itemsMarker.length).trim();
+
+    const orderRows = parseCSV(ordersText);
+    const itemRows = parseCSV(itemsText);
+    if (orderRows.length === 0) {
+      msgEl.innerHTML = '<div class="msg-box warn">The backup file appears to contain no orders.</div>';
+      return;
+    }
+
+    const orderHeader = orderRows[0];
+    const orderIdx = {};
+    ['id', 'created_at', 'confirmed_at', 'total', 'payment_method', 'status', 'edited_at', 'exported', 'exported_at'].forEach(function (c) {
+      orderIdx[c] = orderHeader.indexOf(c);
+    });
+    if (orderIdx.id === -1) {
+      msgEl.innerHTML = '<div class="msg-box error">Orders section is missing an "id" column — is this the right file?</div>';
+      return;
+    }
+
+    const itemHeader = itemRows.length ? itemRows[0] : [];
+    const itemIdx = {};
+    ['id', 'order_id', 'barcode', 'name', 'price', 'qty', 'tax_group'].forEach(function (c) {
+      itemIdx[c] = itemHeader.indexOf(c);
+    });
+
+    let ordersRestored = 0;
+    for (let i = 1; i < orderRows.length; i++) {
+      const r = orderRows[i];
+      const idVal = parseInt(r[orderIdx.id], 10);
+      if (isNaN(idVal)) continue;
+      await db.orders.put({
+        id: idVal,
+        created_at: orderIdx.created_at !== -1 ? r[orderIdx.created_at] : new Date().toISOString(),
+        confirmed_at: orderIdx.confirmed_at !== -1 ? r[orderIdx.confirmed_at] : null,
+        total: parseFloat(r[orderIdx.total]) || 0,
+        payment_method: orderIdx.payment_method !== -1 ? (r[orderIdx.payment_method] || null) : null,
+        status: orderIdx.status !== -1 ? (r[orderIdx.status] || 'confirmed') : 'confirmed',
+        edited_at: orderIdx.edited_at !== -1 ? (r[orderIdx.edited_at] || null) : null,
+        exported: orderIdx.exported !== -1 ? (r[orderIdx.exported] === 'true') : false,
+        exported_at: orderIdx.exported_at !== -1 ? (r[orderIdx.exported_at] || null) : null
+      });
+      ordersRestored++;
+    }
+
+    let itemsRestored = 0;
+    if (itemIdx.order_id !== -1) {
+      for (let i = 1; i < itemRows.length; i++) {
+        const r = itemRows[i];
+        const orderIdVal = parseInt(r[itemIdx.order_id], 10);
+        if (isNaN(orderIdVal)) continue;
+        const record = {
+          order_id: orderIdVal,
+          barcode: itemIdx.barcode !== -1 ? (r[itemIdx.barcode] || null) : null,
+          name: itemIdx.name !== -1 ? r[itemIdx.name] : '',
+          price: parseFloat(r[itemIdx.price]) || 0,
+          qty: parseInt(r[itemIdx.qty], 10) || 1,
+          tax_group: itemIdx.tax_group !== -1 ? r[itemIdx.tax_group] : ''
+        };
+        if (itemIdx.id !== -1) {
+          const idVal = parseInt(r[itemIdx.id], 10);
+          if (!isNaN(idVal)) record.id = idVal;
+        }
+        await db.order_items.put(record);
+        itemsRestored++;
+      }
+    }
+
+    msgEl.innerHTML = '<div class="msg-box success">Restored ' + ordersRestored + ' order(s) and ' + itemsRestored + ' line item(s).</div>';
+    renderOrderHistory();
+  } catch (err) {
+    msgEl.innerHTML = '<div class="msg-box error">Restore failed: ' + (err.message || err) + '</div>';
+  }
+});
+
 // ===================== INIT =====================
 (async function init() {
   document.getElementById('header-status').textContent = 'v' + APP_VERSION;
   await seedSuppliers();
   await refreshSupplierMap();
   await getSettings();
+  await loadActiveOrCreateOrder();
 })();
 
 // ===================== SERVICE WORKER =====================
