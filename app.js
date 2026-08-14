@@ -1,5 +1,5 @@
 // ===================== APP VERSION =====================
-const APP_VERSION = '0.32';
+const APP_VERSION = '0.36';
 
 // ===================== GLOBAL ERROR VISIBILITY =====================
 // Since some devices (e.g. tablets with no USB port) can't be debugged with
@@ -280,7 +280,7 @@ function renderBasketLines() {
     const lineTotal = (line.price * line.qty).toFixed(2);
     const taxClass = line.tax_group === 'R21' ? 'r21' : 'r9';
     div.innerHTML =
-      '<div class="invoice-line-name">' + line.name + '</div>' +
+      '<div class="invoice-line-name">' + (idx + 1) + '. ' + line.name + '</div>' +
       '<div class="invoice-line-price-stepper">' +
         '<button class="invoice-line-price-btn" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease price">&minus;</button>' +
         '<div class="invoice-line-price-wrap">' +
@@ -673,6 +673,16 @@ const listCount = document.getElementById('list-count');
 const listEmpty = document.getElementById('list-empty');
 const tableHead = document.getElementById('product-table-head');
 const tableBody = document.getElementById('product-table-body');
+
+document.getElementById('product-search').addEventListener('input', function () {
+  renderProductList();
+});
+
+document.getElementById('product-sort-toggle-btn').addEventListener('click', function () {
+  productSortAZ = !productSortAZ;
+  this.textContent = productSortAZ ? 'A–Z ✓' : 'A–Z';
+  renderProductList();
+});
 const exportColumnsEl = document.getElementById('export-columns');
 const exportBtn = document.getElementById('export-btn');
 const exportStatus = document.getElementById('export-status');
@@ -685,9 +695,20 @@ function renderExportCheckboxes() {
 
 let pendingListMessage = null;
 
+let productSortAZ = false;
+
 async function renderProductList() {
   await refreshSupplierMap();
-  const products = await db.products.toArray();
+  let products = await db.products.toArray();
+
+  const searchTerm = (document.getElementById('product-search').value || '').trim().toLowerCase();
+  if (searchTerm) {
+    products = products.filter(function (p) { return (p.name || '').toLowerCase().indexOf(searchTerm) !== -1; });
+  }
+  if (productSortAZ) {
+    products.sort(function (a, b) { return (a.name || '').localeCompare(b.name || ''); });
+  }
+
   listCount.textContent = products.length;
   listEmpty.style.display = products.length === 0 ? '' : 'none';
 
@@ -1692,11 +1713,16 @@ function formatDateLong(dateKey) {
 
 function renderOrderDetailHtml(orderId, items) {
   let html = '<div class="card" style="margin-top:8px; background:var(--surface-tint);">';
+  html +=
+    '<div style="margin-bottom:12px;">' +
+      '<input type="text" class="history-add-scan prominent-input" data-order="' + orderId + '" placeholder="Scan or type a barcode to add a missed item" />' +
+    '</div>' +
+    '<div id="history-add-message-' + orderId + '"></div>';
   items.forEach(function (item, idx) {
     const lineTotal = (item.price * item.qty).toFixed(2);
     html +=
       '<div class="invoice-line-card">' +
-        '<div class="invoice-line-name">' + item.name + '</div>' +
+        '<div class="invoice-line-name">' + (idx + 1) + '. ' + item.name + '</div>' +
         '<div class="invoice-line-price-stepper">' +
           '<button class="history-item-price-btn" data-order="' + orderId + '" data-idx="' + idx + '" data-dir="-1" aria-label="Decrease price">&minus;</button>' +
           '<div class="invoice-line-price-wrap">' +
@@ -1889,6 +1915,32 @@ async function renderOrderHistory() {
       orderEditPaymentMethod = sel.value;
     });
     sel.addEventListener('click', function (e) { e.stopPropagation(); });
+  });
+
+  container.querySelectorAll('.history-add-scan').forEach(function (input) {
+    input.addEventListener('click', function (e) { e.stopPropagation(); });
+    input.addEventListener('keydown', async function (e) {
+      if (e.key !== 'Enter') return;
+      const orderId = parseInt(input.getAttribute('data-order'), 10);
+      const code = input.value.trim();
+      input.value = '';
+      if (!code) return;
+      const product = await db.products.get(code);
+      const msgEl = document.getElementById('history-add-message-' + orderId);
+      if (!product) {
+        if (msgEl) msgEl.innerHTML = '<div class="msg-box warn">Unknown barcode ' + code + '.</div>';
+        return;
+      }
+      const existing = orderEditWorkingCopy.find(function (l) { return l.barcode === code; });
+      if (existing) {
+        existing.qty += 1;
+      } else {
+        orderEditWorkingCopy.push({ order_id: orderId, barcode: code, name: product.name, price: product.price, qty: 1, tax_group: product.tax_group });
+      }
+      renderOrderHistory();
+      const refocused = document.querySelector('.history-add-scan[data-order="' + orderId + '"]');
+      if (refocused) refocused.focus();
+    });
   });
 
   container.querySelectorAll('.history-save-btn').forEach(function (btn) {
