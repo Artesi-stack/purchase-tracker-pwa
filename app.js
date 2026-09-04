@@ -1,5 +1,5 @@
 // ===================== APP VERSION =====================
-const APP_VERSION = '0.36';
+const APP_VERSION = '0.40';
 
 // ===================== GLOBAL ERROR VISIBILITY =====================
 // Since some devices (e.g. tablets with no USB port) can't be debugged with
@@ -268,6 +268,22 @@ function updateBasketSummary() {
   const items = basketLines.reduce(function (s, l) { return s + l.qty; }, 0);
   basketTotal.textContent = '€' + total.toFixed(2);
   basketCount.textContent = items + (items === 1 ? ' item' : ' items');
+
+  const sub9 = basketLines.filter(function (l) { return l.tax_group === 'R9'; }).reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  const sub21 = basketLines.filter(function (l) { return l.tax_group === 'R21'; }).reduce(function (s, l) { return s + l.price * l.qty; }, 0);
+  const warningEl = document.getElementById('mixed-tax-warning');
+  if (sub9 > 0 && sub21 > 0) {
+    warningEl.innerHTML =
+      '<div class="msg-box warn" style="font-size:15px;">' +
+        '<div style="font-weight:700; margin-bottom:6px;">Mixed tax rates — needs two separate PIN transactions</div>' +
+        '<div>9% items: <strong>€' + sub9.toFixed(2) + '</strong> &nbsp;·&nbsp; 21% items: <strong>€' + sub21.toFixed(2) + '</strong></div>' +
+      '</div>' +
+      '<div class="msg-box success" style="font-size:14px; margin-top:8px;">' +
+        'If Cash: proceed with total <strong>€' + total.toFixed(2) + '</strong>' +
+      '</div>';
+  } else {
+    warningEl.innerHTML = '';
+  }
 }
 
 function renderBasketLines() {
@@ -996,8 +1012,12 @@ async function getSettings() {
   return s;
 }
 
-function formatInvoiceNumber(year, seq) {
-  return year + '-' + String(seq).padStart(4, '0');
+function formatInvoiceNumber(yearMonth, seq) {
+  return yearMonth + '-' + String(seq).padStart(4, '0');
+}
+
+function getYearMonth(dateStr) {
+  return dateStr.slice(0, 7).replace('-', '');
 }
 
 async function loadSettingsIntoForm() {
@@ -1010,9 +1030,10 @@ async function loadSettingsIntoForm() {
   document.getElementById('settings-vat-number').value = s.vat_number || '';
   document.getElementById('settings-iban').value = s.iban || '';
   document.getElementById('settings-bic').value = s.bic || '';
-  const currentYear = String(new Date().getFullYear());
+  const todayStr = new Date().toISOString().slice(0, 10);
+  const currentYear = todayStr.slice(0, 4);
   const nextSeq = (s.counters[currentYear] || 0) + 1;
-  document.getElementById('settings-next-number').textContent = formatInvoiceNumber(currentYear, nextSeq);
+  document.getElementById('settings-next-number').textContent = formatInvoiceNumber(getYearMonth(todayStr), nextSeq);
   const preview = document.getElementById('settings-logo-preview');
   preview.innerHTML = s.logo ? '<img src="' + s.logo + '" style="max-height:60px; margin-top:8px;" />' : '';
 }
@@ -1099,10 +1120,11 @@ invoiceDateEl.addEventListener('input', refreshInvoiceNumberPreview);
 
 async function refreshInvoiceNumberPreview() {
   const s = await getSettings();
-  const year = (invoiceDateEl.value || new Date().toISOString().slice(0, 10)).slice(0, 4);
+  const dateStr = invoiceDateEl.value || new Date().toISOString().slice(0, 10);
+  const year = dateStr.slice(0, 4);
   const nextSeq = (s.counters[year] || 0) + 1;
   document.getElementById('invoice-number-preview').textContent =
-    formatInvoiceNumber(year, nextSeq) + ' (assigned on approval)';
+    formatInvoiceNumber(getYearMonth(dateStr), nextSeq) + ' (assigned on approval)';
 }
 
 function updateInvoiceSummary() {
@@ -1463,7 +1485,7 @@ async function approveInvoice(id) {
   const s = await getSettings();
   const year = inv.invoice_date.slice(0, 4);
   const seq = (s.counters[year] || 0) + 1;
-  const invoiceNumber = formatInvoiceNumber(year, seq);
+  const invoiceNumber = formatInvoiceNumber(getYearMonth(inv.invoice_date), seq);
 
   inv.invoice_number = invoiceNumber;
   inv.status = 'approved';
@@ -1619,7 +1641,7 @@ document.getElementById('invoice-restore-btn').addEventListener('click', async f
       if (inv.invoice_number) {
         const parts = inv.invoice_number.split('-');
         if (parts.length === 2) {
-          const yr = parts[0];
+          const yr = parts[0].slice(0, 4);
           const seq = parseInt(parts[1], 10);
           if (!isNaN(seq)) {
             s.counters[yr] = Math.max(s.counters[yr] || 0, seq);
@@ -1714,10 +1736,15 @@ function formatDateLong(dateKey) {
 function renderOrderDetailHtml(orderId, items) {
   let html = '<div class="card" style="margin-top:8px; background:var(--surface-tint);">';
   html +=
-    '<div style="margin-bottom:12px;">' +
+    '<div style="margin-bottom:8px;">' +
       '<input type="text" class="history-add-scan prominent-input" data-order="' + orderId + '" placeholder="Scan or type a barcode to add a missed item" />' +
     '</div>' +
-    '<div id="history-add-message-' + orderId + '"></div>';
+    '<button type="button" class="btn btn-sm history-search-toggle-btn" data-order="' + orderId + '" style="width:auto; padding:0 14px;">Search by name</button>' +
+    '<div class="history-search-body" data-order="' + orderId + '" style="display:none; margin-top:8px;">' +
+      '<input type="text" class="history-search-input prominent-input" data-order="' + orderId + '" placeholder="Type a product name..." />' +
+      '<div class="history-search-results" data-order="' + orderId + '" style="margin-top:8px;"></div>' +
+    '</div>' +
+    '<div id="history-add-message-' + orderId + '" style="margin-top:8px;"></div>';
   items.forEach(function (item, idx) {
     const lineTotal = (item.price * item.qty).toFixed(2);
     html +=
@@ -1940,6 +1967,58 @@ async function renderOrderHistory() {
       renderOrderHistory();
       const refocused = document.querySelector('.history-add-scan[data-order="' + orderId + '"]');
       if (refocused) refocused.focus();
+    });
+  });
+
+  container.querySelectorAll('.history-search-toggle-btn').forEach(function (btn) {
+    btn.addEventListener('click', function (e) {
+      e.stopPropagation();
+      const orderId = btn.getAttribute('data-order');
+      const body = document.querySelector('.history-search-body[data-order="' + orderId + '"]');
+      if (body) {
+        body.style.display = body.style.display === 'none' ? '' : 'none';
+        if (body.style.display !== 'none') {
+          const searchInput = body.querySelector('.history-search-input');
+          if (searchInput) searchInput.focus();
+        }
+      }
+    });
+  });
+
+  container.querySelectorAll('.history-search-input').forEach(function (input) {
+    input.addEventListener('click', function (e) { e.stopPropagation(); });
+    input.addEventListener('input', async function () {
+      const orderId = parseInt(input.getAttribute('data-order'), 10);
+      const term = input.value.trim().toLowerCase();
+      const resultsEl = document.querySelector('.history-search-results[data-order="' + orderId + '"]');
+      if (!resultsEl) return;
+      if (!term) { resultsEl.innerHTML = ''; return; }
+      const allProducts = await db.products.toArray();
+      const matches = allProducts.filter(function (p) { return (p.name || '').toLowerCase().indexOf(term) !== -1; }).slice(0, 8);
+      if (matches.length === 0) {
+        resultsEl.innerHTML = '<p class="empty" style="padding:8px 0;">No matches.</p>';
+        return;
+      }
+      resultsEl.innerHTML = matches.map(function (p) {
+        return '<button type="button" class="history-search-result-btn" data-order="' + orderId + '" data-barcode="' + p.barcode + '" style="display:block; width:100%; text-align:left; padding:10px 12px; border:1px solid var(--border); border-radius:var(--radius); background:var(--surface); margin-bottom:6px;">' +
+          p.name + ' <span style="color:var(--muted); font-size:12px;">€' + Number(p.price || 0).toFixed(2) + '</span>' +
+        '</button>';
+      }).join('');
+      resultsEl.querySelectorAll('.history-search-result-btn').forEach(function (resultBtn) {
+        resultBtn.addEventListener('click', async function (e) {
+          e.stopPropagation();
+          const barcode = resultBtn.getAttribute('data-barcode');
+          const product = await db.products.get(barcode);
+          if (!product) return;
+          const existing = orderEditWorkingCopy.find(function (l) { return l.barcode === barcode; });
+          if (existing) {
+            existing.qty += 1;
+          } else {
+            orderEditWorkingCopy.push({ order_id: orderId, barcode: barcode, name: product.name, price: product.price, qty: 1, tax_group: product.tax_group });
+          }
+          renderOrderHistory();
+        });
+      });
     });
   });
 
