@@ -1,5 +1,5 @@
 // ===================== APP VERSION =====================
-const APP_VERSION = '0.40';
+const APP_VERSION = '0.53';
 
 // ===================== GLOBAL ERROR VISIBILITY =====================
 // Since some devices (e.g. tablets with no USB port) can't be debugged with
@@ -274,12 +274,12 @@ function updateBasketSummary() {
   const warningEl = document.getElementById('mixed-tax-warning');
   if (sub9 > 0 && sub21 > 0) {
     warningEl.innerHTML =
-      '<div class="msg-box warn" style="font-size:15px;">' +
-        '<div style="font-weight:700; margin-bottom:6px;">Mixed tax rates — needs two separate PIN transactions</div>' +
-        '<div>9% items: <strong>€' + sub9.toFixed(2) + '</strong> &nbsp;·&nbsp; 21% items: <strong>€' + sub21.toFixed(2) + '</strong></div>' +
+      '<div class="msg-box warn" style="font-size:15px; font-weight:700;">' +
+        '<div style="margin-bottom:6px;">PIN: split payment by tax rate</div>' +
+        '<div>9%: <strong>€' + sub9.toFixed(2) + '</strong> &nbsp;·&nbsp; 21%: <strong>€' + sub21.toFixed(2) + '</strong></div>' +
       '</div>' +
-      '<div class="msg-box success" style="font-size:14px; margin-top:8px;">' +
-        'If Cash: proceed with total <strong>€' + total.toFixed(2) + '</strong>' +
+      '<div class="msg-box success" style="font-size:15px; font-weight:700; margin-top:8px;">' +
+        'If Cash: proceed with total €' + total.toFixed(2) +
       '</div>';
   } else {
     warningEl.innerHTML = '';
@@ -1118,6 +1118,32 @@ const invoiceMessageEl = document.getElementById('invoice-message');
 invoiceDateEl.value = new Date().toISOString().slice(0, 10);
 invoiceDateEl.addEventListener('input', refreshInvoiceNumberPreview);
 
+// ---- Buyer type: Individual / Business collapsible sections (either/or, both start closed) ----
+let invoiceBuyerType = null; // null | 'individual' | 'business'
+const buyerToggleIndividual = document.getElementById('buyer-toggle-individual');
+const buyerToggleBusiness = document.getElementById('buyer-toggle-business');
+const buyerFieldsIndividual = document.getElementById('buyer-fields-individual');
+const buyerFieldsBusiness = document.getElementById('buyer-fields-business');
+
+function setBuyerSection(type) {
+  invoiceBuyerType = (invoiceBuyerType === type) ? null : type; // tapping the open one closes it
+  buyerFieldsIndividual.style.display = invoiceBuyerType === 'individual' ? '' : 'none';
+  buyerFieldsBusiness.style.display = invoiceBuyerType === 'business' ? '' : 'none';
+}
+buyerToggleIndividual.addEventListener('click', function () { setBuyerSection('individual'); });
+buyerToggleBusiness.addEventListener('click', function () { setBuyerSection('business'); });
+
+function clearBuyerFields() {
+  ['invoice-buyer-name', 'invoice-buyer-address1', 'invoice-buyer-address2',
+   'invoice-buyer-company', 'invoice-buyer-contact', 'invoice-buyer-baddress1', 'invoice-buyer-baddress2',
+   'invoice-buyer-btw', 'invoice-buyer-kvk'].forEach(function (id) {
+    document.getElementById(id).value = '';
+  });
+  invoiceBuyerType = null;
+  buyerFieldsIndividual.style.display = 'none';
+  buyerFieldsBusiness.style.display = 'none';
+}
+
 async function refreshInvoiceNumberPreview() {
   const s = await getSettings();
   const dateStr = invoiceDateEl.value || new Date().toISOString().slice(0, 10);
@@ -1299,7 +1325,15 @@ function buildInvoiceDocContent(doc, invoiceRecord, items, settings) {
 
   const blockStartY = y;
   let leftY = blockStartY;
-  if (invoiceRecord.buyer_name || invoiceRecord.buyer_address_line1 || invoiceRecord.buyer_address_line2) {
+  if (invoiceRecord.buyer_type === 'business') {
+    doc.setFont(undefined, 'normal');
+    if (invoiceRecord.buyer_company) { doc.text(invoiceRecord.buyer_company, 20, leftY); leftY += 6; }
+    if (invoiceRecord.buyer_contact) { doc.text('T.a.v. ' + invoiceRecord.buyer_contact, 20, leftY); leftY += 6; }
+    if (invoiceRecord.buyer_business_address_line1) { doc.text(invoiceRecord.buyer_business_address_line1, 20, leftY); leftY += 6; }
+    if (invoiceRecord.buyer_business_address_line2) { doc.text(invoiceRecord.buyer_business_address_line2, 20, leftY); leftY += 6; }
+    if (invoiceRecord.buyer_kvk) { doc.text('KvK: ' + invoiceRecord.buyer_kvk, 20, leftY); leftY += 6; }
+    if (invoiceRecord.buyer_btw) { doc.text('BTW-id: ' + invoiceRecord.buyer_btw, 20, leftY); leftY += 6; }
+  } else if (invoiceRecord.buyer_name || invoiceRecord.buyer_address_line1 || invoiceRecord.buyer_address_line2) {
     doc.setFont(undefined, 'normal');
     if (invoiceRecord.buyer_name) { doc.text(invoiceRecord.buyer_name, 20, leftY); leftY += 6; }
     if (invoiceRecord.buyer_address_line1) { doc.text(invoiceRecord.buyer_address_line1, 20, leftY); leftY += 6; }
@@ -1316,12 +1350,18 @@ function buildInvoiceDocContent(doc, invoiceRecord, items, settings) {
 
   y = Math.max(leftY, rightY) + 10;
 
+  const isMixed = invoiceRecord.sub21 > 0 && invoiceRecord.sub9 > 0;
+  const priceX = isMixed ? 95 : 110;
+  const qtyX = isMixed ? 122 : 145;
+  const descWidth = isMixed ? 70 : 85;
+
   doc.setFontSize(10);
   doc.setFont(undefined, 'bold');
   doc.setTextColor(BLUE[0], BLUE[1], BLUE[2]);
   doc.text('Product', 20, y);
-  doc.text('Prijs p/s', 110, y);
-  doc.text('Aantal', 145, y);
+  doc.text('Prijs p/s', priceX, y);
+  doc.text('Aantal', qtyX, y);
+  if (isMixed) doc.text('BTW', 145, y);
   doc.text('Totaal', 172, y);
   doc.setTextColor(0, 0, 0);
   doc.setFont(undefined, 'normal');
@@ -1331,9 +1371,10 @@ function buildInvoiceDocContent(doc, invoiceRecord, items, settings) {
 
   items.forEach(function (item) {
     const lineTotal = item.price * item.qty;
-    doc.text(String(item.description), 20, y, { maxWidth: 85 });
-    doc.text('€ ' + item.price.toFixed(2), 110, y);
-    doc.text(String(item.qty), 145, y);
+    doc.text(String(item.description), 20, y, { maxWidth: descWidth });
+    doc.text('€ ' + item.price.toFixed(2), priceX, y);
+    doc.text(String(item.qty), qtyX, y);
+    if (isMixed) doc.text(item.tax_group === 'R21' ? '21%' : '9%', 145, y);
     doc.text('€ ' + lineTotal.toFixed(2), 172, y);
     y += 8;
   });
@@ -1344,8 +1385,8 @@ function buildInvoiceDocContent(doc, invoiceRecord, items, settings) {
   y += 8;
 
   const rates = [];
-  if (invoiceRecord.sub21 > 0) rates.push('R21');
   if (invoiceRecord.sub9 > 0) rates.push('R9');
+  if (invoiceRecord.sub21 > 0) rates.push('R21');
 
   let exclTotal = 0;
   const vatByRate = {};
@@ -1386,8 +1427,8 @@ function buildInvoiceDocContent(doc, invoiceRecord, items, settings) {
   const footerLines = [];
   if (settings.legal_name) footerLines.push({ type: 'plain', text: settings.legal_name });
   const line1Segments = [];
-  if (settings.kvk) { line1Segments.push({ text: 'KVK ', color: FOOTER_LABEL, bold: true }); line1Segments.push({ text: settings.kvk + '   ', color: FOOTER_TEXT }); }
-  if (settings.vat_number) { line1Segments.push({ text: 'BTW ', color: FOOTER_LABEL, bold: true }); line1Segments.push({ text: settings.vat_number, color: FOOTER_TEXT }); }
+  if (settings.kvk) { line1Segments.push({ text: 'KvK: ', color: FOOTER_LABEL, bold: true }); line1Segments.push({ text: settings.kvk + '   ', color: FOOTER_TEXT }); }
+  if (settings.vat_number) { line1Segments.push({ text: 'BTW-id: ', color: FOOTER_LABEL, bold: true }); line1Segments.push({ text: settings.vat_number, color: FOOTER_TEXT }); }
   if (line1Segments.length) footerLines.push({ type: 'segments', segments: line1Segments });
   const line2Segments = [];
   if (settings.iban) { line2Segments.push({ text: 'IBAN ', color: FOOTER_LABEL, bold: true }); line2Segments.push({ text: settings.iban + '   ', color: FOOTER_TEXT }); }
@@ -1448,9 +1489,16 @@ document.getElementById('invoice-generate-btn').addEventListener('click', async 
     invoice_number: null,
     status: 'pending',
     invoice_date: invoiceDateEl.value,
-    buyer_name: document.getElementById('invoice-buyer-name').value.trim(),
-    buyer_address_line1: document.getElementById('invoice-buyer-address1').value.trim(),
-    buyer_address_line2: document.getElementById('invoice-buyer-address2').value.trim(),
+    buyer_type: invoiceBuyerType,
+    buyer_name: invoiceBuyerType === 'individual' ? document.getElementById('invoice-buyer-name').value.trim() : '',
+    buyer_address_line1: invoiceBuyerType === 'individual' ? document.getElementById('invoice-buyer-address1').value.trim() : '',
+    buyer_address_line2: invoiceBuyerType === 'individual' ? document.getElementById('invoice-buyer-address2').value.trim() : '',
+    buyer_company: invoiceBuyerType === 'business' ? document.getElementById('invoice-buyer-company').value.trim() : '',
+    buyer_contact: invoiceBuyerType === 'business' ? document.getElementById('invoice-buyer-contact').value.trim() : '',
+    buyer_business_address_line1: invoiceBuyerType === 'business' ? document.getElementById('invoice-buyer-baddress1').value.trim() : '',
+    buyer_business_address_line2: invoiceBuyerType === 'business' ? document.getElementById('invoice-buyer-baddress2').value.trim() : '',
+    buyer_btw: invoiceBuyerType === 'business' ? document.getElementById('invoice-buyer-btw').value.trim() : '',
+    buyer_kvk: invoiceBuyerType === 'business' ? document.getElementById('invoice-buyer-kvk').value.trim() : '',
     total: sub21 + sub9,
     sub21: sub21,
     sub9: sub9,
@@ -1472,9 +1520,7 @@ document.getElementById('invoice-generate-btn').addEventListener('click', async 
   invoiceLines = [];
   renderInvoiceLines();
   invoiceDateEl.value = new Date().toISOString().slice(0, 10);
-  document.getElementById('invoice-buyer-name').value = '';
-  document.getElementById('invoice-buyer-address1').value = '';
-  document.getElementById('invoice-buyer-address2').value = '';
+  clearBuyerFields();
   refreshInvoiceNumberPreview();
 });
 
@@ -1525,7 +1571,7 @@ function downloadTextFile(filename, content, mimeType) {
 document.getElementById('invoice-backup-btn').addEventListener('click', async function () {
   const invoices = await db.invoices.toArray();
   const items = await db.invoice_items.toArray();
-  const invoiceCols = ['id', 'invoice_number', 'status', 'invoice_date', 'buyer_name', 'buyer_address_line1', 'buyer_address_line2', 'total', 'sub21', 'sub9', 'created_at'];
+  const invoiceCols = ['id', 'invoice_number', 'status', 'invoice_date', 'buyer_type', 'buyer_name', 'buyer_address_line1', 'buyer_address_line2', 'buyer_company', 'buyer_contact', 'buyer_business_address_line1', 'buyer_business_address_line2', 'buyer_btw', 'buyer_kvk', 'total', 'sub21', 'sub9', 'created_at'];
   const itemCols = ['id', 'invoice_id', 'barcode', 'description', 'qty', 'price', 'tax_group'];
   const dateStamp = new Date().toISOString().slice(0, 10);
   const combined =
@@ -1574,7 +1620,7 @@ document.getElementById('invoice-restore-btn').addEventListener('click', async f
 
     const invHeader = invoiceRows[0];
     const invIdx = {};
-    ['id', 'invoice_number', 'status', 'invoice_date', 'buyer_name', 'buyer_address_line1', 'buyer_address_line2', 'total', 'sub21', 'sub9', 'created_at'].forEach(function (c) {
+    ['id', 'invoice_number', 'status', 'invoice_date', 'buyer_type', 'buyer_name', 'buyer_address_line1', 'buyer_address_line2', 'buyer_company', 'buyer_contact', 'buyer_business_address_line1', 'buyer_business_address_line2', 'buyer_btw', 'buyer_kvk', 'total', 'sub21', 'sub9', 'created_at'].forEach(function (c) {
       invIdx[c] = invHeader.indexOf(c);
     });
     if (invIdx.id === -1) {
@@ -1602,9 +1648,16 @@ document.getElementById('invoice-restore-btn').addEventListener('click', async f
         invoice_number: invIdx.invoice_number !== -1 ? (r[invIdx.invoice_number] || null) : null,
         status: invIdx.status !== -1 ? (r[invIdx.status] || 'pending') : 'pending',
         invoice_date: invIdx.invoice_date !== -1 ? r[invIdx.invoice_date] : '',
+        buyer_type: invIdx.buyer_type !== -1 ? (r[invIdx.buyer_type] || '') : '',
         buyer_name: invIdx.buyer_name !== -1 ? r[invIdx.buyer_name] : '',
         buyer_address_line1: invIdx.buyer_address_line1 !== -1 ? r[invIdx.buyer_address_line1] : '',
         buyer_address_line2: invIdx.buyer_address_line2 !== -1 ? r[invIdx.buyer_address_line2] : '',
+        buyer_company: invIdx.buyer_company !== -1 ? r[invIdx.buyer_company] : '',
+        buyer_contact: invIdx.buyer_contact !== -1 ? r[invIdx.buyer_contact] : '',
+        buyer_business_address_line1: invIdx.buyer_business_address_line1 !== -1 ? r[invIdx.buyer_business_address_line1] : '',
+        buyer_business_address_line2: invIdx.buyer_business_address_line2 !== -1 ? r[invIdx.buyer_business_address_line2] : '',
+        buyer_btw: invIdx.buyer_btw !== -1 ? r[invIdx.buyer_btw] : '',
+        buyer_kvk: invIdx.buyer_kvk !== -1 ? r[invIdx.buyer_kvk] : '',
         total: parseFloat(r[invIdx.total]) || 0,
         sub21: parseFloat(r[invIdx.sub21]) || 0,
         sub9: parseFloat(r[invIdx.sub9]) || 0,
@@ -1789,6 +1842,23 @@ function renderOrderDetailHtml(orderId, items) {
   return html;
 }
 
+// Badges are shown oldest event first, so the order itself tells you what happened last.
+// An edit newer than the last export means the backup file is out of date.
+// If an export has no recorded time (old backups), the export counts as the latest event,
+// because any edit shown in that file was made before the file existed.
+function orderStatusBadges(o) {
+  const exportedHtml = '<span class="status-badge approved">Exported</span>';
+  const editedHtml = '<span class="status-badge pending">Edited</span>';
+  const editedSinceHtml = '<span class="status-badge pending">Edited since export</span>';
+  if (o.exported && o.edited_at) {
+    const editedLater = !!o.exported_at && o.edited_at > o.exported_at;
+    return editedLater ? ' ' + exportedHtml + ' ' + editedSinceHtml : ' ' + editedHtml + ' ' + exportedHtml;
+  }
+  if (o.exported) return ' ' + exportedHtml;
+  if (o.edited_at) return ' ' + editedHtml;
+  return '';
+}
+
 async function renderOrderHistory() {
   const allOrders = await db.orders.where('status').equals('confirmed').toArray();
   allOrders.sort(function (a, b) { return (b.confirmed_at || '').localeCompare(a.confirmed_at || ''); });
@@ -1834,14 +1904,13 @@ async function renderOrderHistory() {
         const timeStr = o.confirmed_at ? new Date(o.confirmed_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
         const payClass = o.payment_method === 'cash' ? 'r9' : 'r21';
         const payLabel = o.payment_method === 'cash' ? 'Cash' : 'PIN';
-        const exportedBadge = o.exported ? ' <span class="status-badge approved">Exported</span>' : '';
-        const editedBadge = o.edited_at ? ' <span class="status-badge pending">Edited</span>' : '';
+        const statusBadges = orderStatusBadges(o);
         html +=
           '<div class="history-order-row" data-order-id="' + o.id + '" style="display:flex; justify-content:space-between; align-items:center; padding:10px 0; border-bottom:1px solid var(--border); cursor:pointer;">' +
             '<div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">' +
               '<span>' + timeStr + '</span>' +
               '<span class="tax-badge ' + payClass + '">' + payLabel + '</span>' +
-              exportedBadge + editedBadge +
+              statusBadges +
             '</div>' +
             '<div style="font-weight:500;">€' + o.total.toFixed(2) + '</div>' +
           '</div>';
@@ -2076,8 +2145,42 @@ async function renderOrderHistory() {
   });
 }
 
-// ===================== ORDER EXPORT =====================
-async function exportOrders(orderList) {
+// ===================== ORDER EXPORT (by quarter or whole year) =====================
+const ORDER_PERIODS = {
+  q1: { label: 'Q1', from: '-01-01', to: '-03-31' },
+  q2: { label: 'Q2', from: '-04-01', to: '-06-30' },
+  q3: { label: 'Q3', from: '-07-01', to: '-09-30' },
+  q4: { label: 'Q4', from: '-10-01', to: '-12-31' },
+  year: { label: 'full-year', from: '-01-01', to: '-12-31' }
+};
+
+function ordersInPeriod(allOrders, year, periodKey) {
+  const period = ORDER_PERIODS[periodKey];
+  const from = year + period.from;
+  const to = year + period.to;
+  return allOrders.filter(function (o) {
+    const d = (o.confirmed_at || '').slice(0, 10);
+    return o.status === 'confirmed' && d >= from && d <= to;
+  }).sort(function (a, b) { return (a.confirmed_at || '').localeCompare(b.confirmed_at || ''); });
+}
+
+async function populateOrderExportYears() {
+  const yearSel = document.getElementById('order-export-year');
+  const periodSel = document.getElementById('order-export-period');
+  const confirmed = await db.orders.where('status').equals('confirmed').toArray();
+  const years = new Set([String(new Date().getFullYear())]);
+  confirmed.forEach(function (o) { if (o.confirmed_at) years.add(o.confirmed_at.slice(0, 4)); });
+  const sorted = Array.from(years).sort().reverse();
+  const previous = yearSel.value;
+  yearSel.innerHTML = sorted.map(function (y) { return '<option value="' + y + '">' + y + '</option>'; }).join('');
+  yearSel.value = sorted.indexOf(previous) !== -1 ? previous : sorted[0];
+  if (!periodSel.dataset.ready) {
+    periodSel.value = 'q' + (Math.floor(new Date().getMonth() / 3) + 1);
+    periodSel.dataset.ready = '1';
+  }
+}
+
+async function exportOrders(orderList, label) {
   const orderCols = ['id', 'created_at', 'confirmed_at', 'total', 'payment_method', 'status', 'edited_at', 'exported', 'exported_at'];
   const itemCols = ['id', 'order_id', 'barcode', 'name', 'price', 'qty', 'tax_group', 'price_excl_tax'];
 
@@ -2088,158 +2191,213 @@ async function exportOrders(orderList) {
     return Object.assign({}, it, { price_excl_tax: Math.round((it.price / (1 + frac)) * 100) / 100 });
   });
 
-  const dateStamp = new Date().toISOString().slice(0, 10);
+  const nowIso = new Date().toISOString();
+  const rowsForFile = orderList.map(function (o) {
+    return Object.assign({}, o, { exported: true, exported_at: nowIso });
+  });
   const combined =
-    '## ORDERS\n' + csvFromRows(orderList, orderCols) +
+    '## ORDERS\n' + csvFromRows(rowsForFile, orderCols) +
     '\n\n## ORDER_ITEMS\n' + csvFromRows(itemsWithExclTax, itemCols);
-  downloadTextFile('order-backup-' + dateStamp + '.csv', combined);
+  downloadTextFile('order-backup-' + label + '-' + nowIso.slice(0, 10) + '.csv', combined);
 
   for (const id of orderIds) {
-    await db.orders.update(id, { exported: true, exported_at: new Date().toISOString() });
+    await db.orders.update(id, { exported: true, exported_at: nowIso });
   }
 }
 
-document.getElementById('order-export-toggle-btn').addEventListener('click', function () {
+document.getElementById('order-export-toggle-btn').addEventListener('click', async function () {
   const body = document.getElementById('order-export-body');
-  body.style.display = body.style.display === 'none' ? '' : 'none';
+  const opening = body.style.display === 'none';
+  if (opening) await populateOrderExportYears();
+  body.style.display = opening ? '' : 'none';
 });
 
-document.getElementById('order-export-new-btn').addEventListener('click', async function () {
+document.getElementById('order-export-run-btn').addEventListener('click', async function () {
   const statusEl = document.getElementById('order-export-status');
+  const year = document.getElementById('order-export-year').value;
+  const periodKey = document.getElementById('order-export-period').value;
+  const label = year + '-' + ORDER_PERIODS[periodKey].label;
   const allOrders = await db.orders.where('status').equals('confirmed').toArray();
-  const newOrders = allOrders.filter(function (o) { return !o.exported; });
-  if (newOrders.length === 0) {
-    statusEl.textContent = 'No new sales to export.';
-    setTimeout(function () { statusEl.textContent = ''; }, 2500);
-    return;
+  const selected = ordersInPeriod(allOrders, year, periodKey);
+  if (selected.length === 0) {
+    statusEl.textContent = 'No confirmed orders in ' + label + '.';
+  } else {
+    await exportOrders(selected, label);
+    statusEl.textContent = 'Exported ' + selected.length + (selected.length === 1 ? ' order' : ' orders') + ' (' + label + ').';
+    renderOrderHistory();
   }
-  await exportOrders(newOrders);
-  statusEl.textContent = 'Exported ' + newOrders.length + ' new order(s).';
-  setTimeout(function () { statusEl.textContent = ''; }, 2500);
-  renderOrderHistory();
+  setTimeout(function () { statusEl.textContent = ''; }, 4000);
 });
 
-document.getElementById('order-export-range-btn').addEventListener('click', async function () {
-  const statusEl = document.getElementById('order-export-status');
-  const from = document.getElementById('order-export-from').value;
-  const to = document.getElementById('order-export-to').value;
-  if (!from || !to) {
-    statusEl.textContent = 'Pick both a from and to date.';
-    setTimeout(function () { statusEl.textContent = ''; }, 2500);
-    return;
-  }
-  const allOrders = await db.orders.where('status').equals('confirmed').toArray();
-  const rangeOrders = allOrders.filter(function (o) {
-    const d = (o.confirmed_at || '').slice(0, 10);
-    return d >= from && d <= to;
-  });
-  if (rangeOrders.length === 0) {
-    statusEl.textContent = 'No confirmed orders in that date range.';
-    setTimeout(function () { statusEl.textContent = ''; }, 2500);
-    return;
-  }
-  await exportOrders(rangeOrders);
-  statusEl.textContent = 'Exported ' + rangeOrders.length + ' order(s) from ' + from + ' to ' + to + '.';
-  setTimeout(function () { statusEl.textContent = ''; }, 2500);
-  renderOrderHistory();
-});
-
-// ===================== ORDER RESTORE FROM BACKUP =====================
-let selectedOrderBackupFile = null;
+// ===================== ORDER RESTORE FROM BACKUP FILE(S) =====================
+// Orders are matched by their creation timestamp, never by the old order number,
+// so a restore can't overwrite a different order or the basket that is currently open.
+let selectedOrderBackupFiles = [];
 
 document.getElementById('select-order-backup-file-btn').addEventListener('click', function () {
   document.getElementById('import-order-backup-file').click();
 });
 document.getElementById('import-order-backup-file').addEventListener('change', function (e) {
-  selectedOrderBackupFile = e.target.files[0] || null;
-  document.getElementById('order-backup-file-name').textContent = selectedOrderBackupFile ? selectedOrderBackupFile.name : 'No file selected';
+  selectedOrderBackupFiles = Array.from(e.target.files || []);
+  const nameEl = document.getElementById('order-backup-file-name');
+  if (selectedOrderBackupFiles.length === 0) {
+    nameEl.textContent = 'No file selected';
+  } else if (selectedOrderBackupFiles.length === 1) {
+    nameEl.textContent = selectedOrderBackupFiles[0].name;
+  } else {
+    nameEl.textContent = selectedOrderBackupFiles.length + ' files selected';
+  }
 });
+
+function orderLastChange(o) {
+  return o.edited_at || o.confirmed_at || o.created_at || '';
+}
+
+async function parseOrderBackupFile(file) {
+  const fullText = await file.text();
+  const ordersMarker = '## ORDERS';
+  const itemsMarker = '## ORDER_ITEMS';
+  const ordersIdx = fullText.indexOf(ordersMarker);
+  const itemsIdx = fullText.indexOf(itemsMarker);
+  if (ordersIdx === -1 || itemsIdx === -1 || itemsIdx < ordersIdx) return null;
+  const orderRows = parseCSV(fullText.slice(ordersIdx + ordersMarker.length, itemsIdx).trim());
+  const itemRows = parseCSV(fullText.slice(itemsIdx + itemsMarker.length).trim());
+  if (orderRows.length === 0) return null;
+
+  const colOf = function (header, name) { return header.indexOf(name); };
+  const get = function (row, i, fallback) {
+    return i !== -1 && row[i] !== undefined && row[i] !== '' ? row[i] : fallback;
+  };
+
+  const oh = orderRows[0];
+  const o = {
+    id: colOf(oh, 'id'), created_at: colOf(oh, 'created_at'), confirmed_at: colOf(oh, 'confirmed_at'),
+    total: colOf(oh, 'total'), payment_method: colOf(oh, 'payment_method'), status: colOf(oh, 'status'),
+    edited_at: colOf(oh, 'edited_at'), exported_at: colOf(oh, 'exported_at')
+  };
+  if (o.id === -1 || o.created_at === -1) return null;
+
+  const orders = [];
+  let skipped = 0;
+  for (let i = 1; i < orderRows.length; i++) {
+    const r = orderRows[i];
+    const fileId = String(get(r, o.id, '')).trim();
+    const createdAt = String(get(r, o.created_at, '')).trim();
+    const status = get(r, o.status, 'confirmed');
+    if (!fileId || !createdAt || status !== 'confirmed') { skipped++; continue; }
+    orders.push({
+      fileId: fileId,
+      data: {
+        created_at: createdAt,
+        confirmed_at: get(r, o.confirmed_at, null),
+        total: parseFloat(get(r, o.total, 0)) || 0,
+        payment_method: get(r, o.payment_method, null),
+        status: 'confirmed',
+        edited_at: get(r, o.edited_at, null),
+        exported: true,
+        exported_at: get(r, o.exported_at, null)
+      }
+    });
+  }
+
+  const ih = itemRows.length ? itemRows[0] : [];
+  const it = {
+    order_id: colOf(ih, 'order_id'), barcode: colOf(ih, 'barcode'), name: colOf(ih, 'name'),
+    price: colOf(ih, 'price'), qty: colOf(ih, 'qty'), tax_group: colOf(ih, 'tax_group')
+  };
+  const itemsByFileOrder = {};
+  if (it.order_id !== -1) {
+    for (let i = 1; i < itemRows.length; i++) {
+      const r = itemRows[i];
+      const fid = String(get(r, it.order_id, '')).trim();
+      if (!fid) continue;
+      (itemsByFileOrder[fid] = itemsByFileOrder[fid] || []).push({
+        barcode: get(r, it.barcode, null),
+        name: get(r, it.name, ''),
+        price: parseFloat(get(r, it.price, 0)) || 0,
+        qty: parseInt(get(r, it.qty, 1), 10) || 1,
+        tax_group: get(r, it.tax_group, '')
+      });
+    }
+  }
+  return { orders: orders, skipped: skipped, itemsByFileOrder: itemsByFileOrder };
+}
+
+async function applyOrderBackups(parsedFiles) {
+  const counts = { added: 0, updated: 0, unchanged: 0, skipped: 0, items: 0 };
+  await db.transaction('rw', db.orders, db.order_items, async function () {
+    const existingOrders = await db.orders.toArray();
+    const byCreated = new Map();
+    existingOrders.forEach(function (o) { if (o.created_at) byCreated.set(o.created_at, o); });
+
+    for (const pf of parsedFiles) {
+      for (const entry of pf.orders) {
+        const fileOrder = entry.data;
+        const fileItems = pf.itemsByFileOrder[entry.fileId] || [];
+        const existing = byCreated.get(fileOrder.created_at);
+
+        if (!existing) {
+          const newId = await db.orders.add(Object.assign({}, fileOrder));
+          byCreated.set(fileOrder.created_at, Object.assign({}, fileOrder, { id: newId }));
+          for (const item of fileItems) {
+            await db.order_items.add(Object.assign({ order_id: newId }, item));
+            counts.items++;
+          }
+          counts.added++;
+        } else if (existing.status !== 'confirmed') {
+          counts.skipped++;
+        } else if (fileItems.length === 0 || orderLastChange(existing) >= orderLastChange(fileOrder)) {
+          counts.unchanged++;
+        } else {
+          await db.order_items.where('order_id').equals(existing.id).delete();
+          for (const item of fileItems) {
+            await db.order_items.add(Object.assign({ order_id: existing.id }, item));
+            counts.items++;
+          }
+          const merged = Object.assign({}, fileOrder, { exported_at: fileOrder.exported_at || existing.exported_at || null });
+          await db.orders.update(existing.id, merged);
+          byCreated.set(fileOrder.created_at, Object.assign({}, existing, merged));
+          counts.updated++;
+        }
+      }
+    }
+  });
+  return counts;
+}
 
 document.getElementById('order-restore-btn').addEventListener('click', async function () {
   const msgEl = document.getElementById('order-restore-message');
   try {
-    if (!selectedOrderBackupFile) {
-      msgEl.innerHTML = '<div class="msg-box error">Select a backup file before restoring.</div>';
+    if (selectedOrderBackupFiles.length === 0) {
+      msgEl.innerHTML = '<div class="msg-box error">Select one or more backup files before restoring.</div>';
       return;
     }
-    const fullText = await selectedOrderBackupFile.text();
-    const ordersMarker = '## ORDERS';
-    const itemsMarker = '## ORDER_ITEMS';
-    const ordersIdx = fullText.indexOf(ordersMarker);
-    const itemsIdx = fullText.indexOf(itemsMarker);
-    if (ordersIdx === -1 || itemsIdx === -1) {
-      msgEl.innerHTML = '<div class="msg-box error">This doesn\'t look like a valid order backup file.</div>';
-      return;
+    const parsed = [];
+    let filesBad = 0;
+    for (const file of selectedOrderBackupFiles) {
+      const result = await parseOrderBackupFile(file);
+      if (result) { parsed.push(result); } else { filesBad++; }
     }
-    const ordersText = fullText.slice(ordersIdx + ordersMarker.length, itemsIdx).trim();
-    const itemsText = fullText.slice(itemsIdx + itemsMarker.length).trim();
-
-    const orderRows = parseCSV(ordersText);
-    const itemRows = parseCSV(itemsText);
-    if (orderRows.length === 0) {
-      msgEl.innerHTML = '<div class="msg-box warn">The backup file appears to contain no orders.</div>';
+    if (parsed.length === 0) {
+      msgEl.innerHTML = '<div class="msg-box error">None of the selected files look like an order backup.</div>';
       return;
     }
 
-    const orderHeader = orderRows[0];
-    const orderIdx = {};
-    ['id', 'created_at', 'confirmed_at', 'total', 'payment_method', 'status', 'edited_at', 'exported', 'exported_at'].forEach(function (c) {
-      orderIdx[c] = orderHeader.indexOf(c);
-    });
-    if (orderIdx.id === -1) {
-      msgEl.innerHTML = '<div class="msg-box error">Orders section is missing an "id" column — is this the right file?</div>';
-      return;
-    }
+    const counts = await applyOrderBackups(parsed);
+    counts.skipped += parsed.reduce(function (s, p) { return s + p.skipped; }, 0);
 
-    const itemHeader = itemRows.length ? itemRows[0] : [];
-    const itemIdx = {};
-    ['id', 'order_id', 'barcode', 'name', 'price', 'qty', 'tax_group'].forEach(function (c) {
-      itemIdx[c] = itemHeader.indexOf(c);
-    });
+    let msg = 'Restored from ' + parsed.length + (parsed.length === 1 ? ' file' : ' files') + ': ' +
+      counts.added + ' added, ' + counts.updated + ' updated, ' + counts.unchanged + ' already up to date';
+    if (counts.skipped > 0) msg += ', ' + counts.skipped + ' skipped';
+    msg += '.';
+    if (filesBad > 0) msg += ' ' + filesBad + (filesBad === 1 ? ' file was' : ' files were') + ' not a valid order backup.';
+    msgEl.innerHTML = '<div class="msg-box success">' + msg + '</div>';
 
-    let ordersRestored = 0;
-    for (let i = 1; i < orderRows.length; i++) {
-      const r = orderRows[i];
-      const idVal = parseInt(r[orderIdx.id], 10);
-      if (isNaN(idVal)) continue;
-      await db.orders.put({
-        id: idVal,
-        created_at: orderIdx.created_at !== -1 ? r[orderIdx.created_at] : new Date().toISOString(),
-        confirmed_at: orderIdx.confirmed_at !== -1 ? r[orderIdx.confirmed_at] : null,
-        total: parseFloat(r[orderIdx.total]) || 0,
-        payment_method: orderIdx.payment_method !== -1 ? (r[orderIdx.payment_method] || null) : null,
-        status: orderIdx.status !== -1 ? (r[orderIdx.status] || 'confirmed') : 'confirmed',
-        edited_at: orderIdx.edited_at !== -1 ? (r[orderIdx.edited_at] || null) : null,
-        exported: orderIdx.exported !== -1 ? (r[orderIdx.exported] === 'true') : false,
-        exported_at: orderIdx.exported_at !== -1 ? (r[orderIdx.exported_at] || null) : null
-      });
-      ordersRestored++;
-    }
-
-    let itemsRestored = 0;
-    if (itemIdx.order_id !== -1) {
-      for (let i = 1; i < itemRows.length; i++) {
-        const r = itemRows[i];
-        const orderIdVal = parseInt(r[itemIdx.order_id], 10);
-        if (isNaN(orderIdVal)) continue;
-        const record = {
-          order_id: orderIdVal,
-          barcode: itemIdx.barcode !== -1 ? (r[itemIdx.barcode] || null) : null,
-          name: itemIdx.name !== -1 ? r[itemIdx.name] : '',
-          price: parseFloat(r[itemIdx.price]) || 0,
-          qty: parseInt(r[itemIdx.qty], 10) || 1,
-          tax_group: itemIdx.tax_group !== -1 ? r[itemIdx.tax_group] : ''
-        };
-        if (itemIdx.id !== -1) {
-          const idVal = parseInt(r[itemIdx.id], 10);
-          if (!isNaN(idVal)) record.id = idVal;
-        }
-        await db.order_items.put(record);
-        itemsRestored++;
-      }
-    }
-
-    msgEl.innerHTML = '<div class="msg-box success">Restored ' + ordersRestored + ' order(s) and ' + itemsRestored + ' line item(s).</div>';
+    selectedOrderBackupFiles = [];
+    document.getElementById('import-order-backup-file').value = '';
+    document.getElementById('order-backup-file-name').textContent = 'No file selected';
+    await loadActiveOrCreateOrder();
+    await populateOrderExportYears();
     renderOrderHistory();
   } catch (err) {
     msgEl.innerHTML = '<div class="msg-box error">Restore failed: ' + (err.message || err) + '</div>';

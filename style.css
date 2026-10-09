@@ -119,6 +119,24 @@ main.wide { max-width: 1200px; }
 
 .row span:first-child { color: var(--muted); }
 
+/* Section title: bold, dark, dark underline (introduces a section) */
+.row.section-title {
+  align-items: center;
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--ink);
+  border-bottom: 3px solid var(--ink);
+  padding: 0 4px 8px;
+  margin-bottom: 6px;
+}
+.row.section-title > span:first-child { color: var(--ink); }
+
+/* Label style: bold, dark, no line (single rows, labels, hints) */
+.row.label-strong > span { color: var(--ink); font-size: 15px; font-weight: 700; }
+.row.label-strong > span:first-child { color: var(--ink); }
+.field label.field-label-strong { font-size: 15px; font-weight: 700; color: var(--ink); }
+.hint.hint-strong { font-size: 14px; font-weight: 700; color: var(--ink); }
+
 .field { margin-bottom: 12px; }
 
 .field label {
@@ -457,12 +475,17 @@ nav.sub-nav button.active {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--ink);
   white-space: nowrap;
   flex-shrink: 0;
 }
 
 table#product-table { font-size: 12px; }
+
+/* Column headers: same bold dark label style (Product List + Invoice History) */
+table#product-table th, #invoice-history-table th { color: var(--ink); font-weight: 700; font-size: 14px; }
 table#product-table th, table#product-table td { white-space: nowrap; }
 
 .grid-price-stepper { display: flex; align-items: center; gap: 5px; }

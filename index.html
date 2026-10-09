@@ -35,22 +35,22 @@
     <div id="sub-basket-new">
       <div class="scan-box">
         <input id="basket-scan" type="text" placeholder="Scan or type a barcode, then press Enter" autofocus />
-        <p class="hint">Scanning the same barcode again increases its quantity.</p>
+        <p class="hint hint-strong">Scanning the same barcode again increases its quantity.</p>
       </div>
 
       <div id="basket-message"></div>
       <div id="mixed-tax-warning"></div>
 
       <div class="card">
-        <div class="row" style="font-weight:500; color:var(--ink);"><span>Basket</span><span id="basket-count">0 items</span></div>
+        <div class="row section-title"><span>Basket</span><span id="basket-count">0 items</span></div>
         <div id="basket-lines"></div>
         <p id="basket-empty" class="empty">Basket is empty — scan a barcode above.</p>
       </div>
 
       <div class="card">
-        <div class="row" style="align-items:baseline;">
-          <span style="font-size:14px;">Total</span>
-          <span id="basket-total" style="font-size:28px; font-weight:500; color:var(--ink);">€0.00</span>
+        <div class="row label-strong" style="align-items:baseline;">
+          <span style="font-size:17px;">Total</span>
+          <span id="basket-total" style="font-size:28px;">€0.00</span>
         </div>
       </div>
 
@@ -62,10 +62,10 @@
       <div class="card" style="margin-top:16px;">
         <button id="today-summary-toggle-btn" class="btn" style="width:100%;">Today's summary</button>
         <div id="today-summary-body" style="display:none; margin-top:12px;">
-          <div class="row"><span>Cash</span><span id="summary-cash">€0.00</span></div>
-          <div class="row"><span>PIN</span><span id="summary-pin">€0.00</span></div>
-          <div class="row" style="font-weight:500; color:var(--ink);"><span>Total</span><span id="summary-total">€0.00</span></div>
-          <div class="row"><span>Orders</span><span id="summary-count">0</span></div>
+          <div class="row label-strong"><span>Cash</span><span id="summary-cash">€0.00</span></div>
+          <div class="row label-strong"><span>PIN</span><span id="summary-pin">€0.00</span></div>
+          <div class="row label-strong"><span style="font-size:17px;">Total</span><span id="summary-total" style="font-size:17px;">€0.00</span></div>
+          <div class="row label-strong"><span>Orders</span><span id="summary-count">0</span></div>
         </div>
       </div>
     </div>
@@ -74,26 +74,32 @@
     <div id="sub-basket-history" style="display:none;">
 
       <div class="card">
-        <div class="row" style="font-weight:500; color:var(--ink);"><span>Order history</span><span id="basket-history-count">0</span></div>
+        <div class="row section-title"><span>Order history</span><span id="basket-history-count">0</span></div>
       </div>
       <div id="basket-history-message"></div>
 
       <div class="card">
-        <button id="order-export-toggle-btn" class="btn" style="width:100%;">Export</button>
+        <button id="order-export-toggle-btn" class="btn primary" style="width:100%;">Export</button>
         <div id="order-export-body" style="display:none; margin-top:12px;">
-          <button id="order-export-new-btn" class="btn btn-sm primary">Export new sales only</button>
-          <div style="display:flex; gap:8px; margin-top:8px;">
-            <input id="order-export-from" type="date" class="date-input-sm" />
-            <input id="order-export-to" type="date" class="date-input-sm" />
+          <p class="hint" style="margin:0 0 6px;">Choose a period to export:</p>
+          <div style="display:flex; gap:8px;">
+            <select id="order-export-year" class="date-input-sm"></select>
+            <select id="order-export-period" class="date-input-sm">
+              <option value="q1">Q1 (Jan–Mar)</option>
+              <option value="q2">Q2 (Apr–Jun)</option>
+              <option value="q3">Q3 (Jul–Sep)</option>
+              <option value="q4">Q4 (Oct–Dec)</option>
+              <option value="year">Whole year</option>
+            </select>
           </div>
-          <button id="order-export-range-btn" class="btn btn-sm" style="margin-top:6px;">Export date range</button>
+          <button id="order-export-run-btn" class="btn btn-sm primary" style="margin-top:8px;">Export orders</button>
           <p id="order-export-status" class="status"></p>
 
           <div style="margin-top:12px; padding-top:12px; border-top:1px solid var(--border);">
-            <p class="hint" style="margin:0 0 6px;">Restore from a previous backup file:</p>
-            <button id="select-order-backup-file-btn" class="btn btn-sm" style="margin-bottom:6px;">Select backup file</button>
+            <p class="hint" style="margin:0 0 6px;">Restore from one or more backup files:</p>
+            <button id="select-order-backup-file-btn" class="btn btn-sm" style="margin-bottom:6px;">Select backup file(s)</button>
             <span id="order-backup-file-name" style="font-size:12px; color:var(--muted); display:block; margin-bottom:6px;">No file selected</span>
-            <input id="import-order-backup-file" type="file" accept=".csv,text/csv,text/plain" style="display:none;" />
+            <input id="import-order-backup-file" type="file" multiple accept=".csv,text/csv,text/plain" style="display:none;" />
             <button id="order-restore-btn" class="btn btn-sm primary">Restore order backup</button>
           </div>
           <div id="order-restore-message"></div>
@@ -108,10 +114,20 @@
 
   <div id="payment-modal" class="modal-overlay" style="display:none;">
     <div class="modal-box">
-      <p id="payment-modal-text">How was this order paid?</p>
+      <div style="background:var(--surface-tint); border-radius:var(--radius); padding:10px 14px; margin-bottom:14px;">
+        <p id="payment-modal-text" style="font-size:16px; font-weight:500; margin:0; text-align:center;">Choose the payment type</p>
+      </div>
       <div class="split">
-        <button id="payment-cash-btn" class="btn">Cash</button>
-        <button id="payment-pin-btn" class="btn primary">PIN</button>
+        <button id="payment-cash-btn" class="btn" style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; height:64px; border-color:#22c55e; background:#eafbf1; color:#16803c;">
+          <span style="font-size:24px; font-weight:700; line-height:1;">$</span>
+          <span>Cash</span>
+        </button>
+        <button id="payment-pin-btn" class="btn" style="display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px; height:64px; border-color:#3b82f6; background:#eaf2ff; color:#1d4ed8;">
+          <span style="width:30px; height:20px; border-radius:4px; border:2px solid #1d4ed8; position:relative; display:inline-block;">
+            <span style="position:absolute; top:5px; left:2px; right:2px; height:4px; background:#1d4ed8;"></span>
+          </span>
+          <span>PIN</span>
+        </button>
       </div>
     </div>
   </div>
@@ -129,7 +145,7 @@
     <div id="sub-manage">
       <div class="scan-box">
         <input id="manage-scan" type="text" placeholder="Scan or type a barcode, then press Enter" />
-        <p class="hint">Look up an existing product to view and edit its details.</p>
+        <p class="hint hint-strong">Look up an existing product to view and edit its details.</p>
       </div>
       <div id="manage-panel"></div>
       <p id="manage-status" class="status"></p>
@@ -139,7 +155,7 @@
     <div id="sub-add" style="display:none;">
       <div class="scan-box">
         <input id="add-scan" type="text" placeholder="Scan or type a barcode, then press Enter" />
-        <p class="hint">New barcodes open a blank form. Existing barcodes are shown read-only.</p>
+        <p class="hint hint-strong">New barcodes open a blank form. Existing barcodes are shown read-only.</p>
       </div>
       <div id="add-panel"></div>
       <p id="add-status" class="status"></p>
@@ -149,11 +165,11 @@
     <div id="sub-list" style="display:none;">
       <div id="list-message"></div>
       <div class="card">
-        <div class="row" style="font-weight:500; color:var(--ink);"><span>All products</span><span id="list-count">0</span></div>
+        <div class="row section-title"><span>All products</span><span id="list-count">0</span></div>
       </div>
 
       <div class="card" id="export-card">
-        <div class="row" style="font-weight:500; color:var(--ink);"><span>Export</span><span></span></div>
+        <div class="row section-title"><span>Export</span><span></span></div>
         <div id="export-columns" class="export-columns"></div>
         <div class="split" style="margin-top:12px;">
           <button id="export-btn" class="btn primary">Export selected columns (CSV)</button>
@@ -192,18 +208,32 @@
     <div id="sub-invoice-new">
       <div class="card">
         <div class="field">
-          <label>Invoice date</label>
+          <label class="field-label-strong">Invoice date</label>
           <input id="invoice-date" type="date" />
         </div>
-        <div class="field"><label>Buyer name (optional)</label><input id="invoice-buyer-name" type="text" /></div>
-        <div class="field"><label>Buyer address line 1 (optional)</label><input id="invoice-buyer-address1" type="text" /></div>
-        <div class="field"><label>Buyer address line 2 (optional)</label><input id="invoice-buyer-address2" type="text" /></div>
-        <div class="row"><span>Invoice number</span><span id="invoice-number-preview">—</span></div>
+        <button id="buyer-toggle-individual" type="button" class="btn" style="width:100%;">Individual details</button>
+        <div id="buyer-fields-individual" style="display:none; margin-top:12px;">
+          <div class="field"><label>Buyer name (optional)</label><input id="invoice-buyer-name" type="text" /></div>
+          <div class="field"><label>Buyer address line 1 (optional)</label><input id="invoice-buyer-address1" type="text" /></div>
+          <div class="field"><label>Buyer address line 2 (optional)</label><input id="invoice-buyer-address2" type="text" /></div>
+        </div>
+
+        <button id="buyer-toggle-business" type="button" class="btn" style="width:100%; margin-top:8px;">Business details</button>
+        <div id="buyer-fields-business" style="display:none; margin-top:12px;">
+          <div class="field"><label>Company name (optional)</label><input id="invoice-buyer-company" type="text" /></div>
+          <div class="field"><label>Contact name (optional)</label><input id="invoice-buyer-contact" type="text" /></div>
+          <div class="field"><label>Business address line 1 (optional)</label><input id="invoice-buyer-baddress1" type="text" /></div>
+          <div class="field"><label>Business address line 2 (optional)</label><input id="invoice-buyer-baddress2" type="text" /></div>
+          <div class="field"><label>BTW number (optional)</label><input id="invoice-buyer-btw" type="text" /></div>
+          <div class="field"><label>KVK number (optional)</label><input id="invoice-buyer-kvk" type="text" /></div>
+        </div>
+
+        <div class="row label-strong" style="margin-top:12px;"><span>Invoice number</span><span id="invoice-number-preview">—</span></div>
       </div>
 
       <div class="scan-box">
         <input id="invoice-scan" type="text" placeholder="Scan or type a barcode, then press Enter" />
-        <p class="hint">Scanning the same barcode again increases its quantity.</p>
+        <p class="hint hint-strong">Scanning the same barcode again increases its quantity.</p>
       </div>
 
       <div class="card">
@@ -226,17 +256,17 @@
       <div id="invoice-message"></div>
 
       <div class="card">
-        <div class="row" style="font-weight:500; color:var(--ink);"><span>Invoice lines</span><span id="invoice-count">0 lines</span></div>
+        <div class="row section-title"><span>Invoice lines</span><span id="invoice-count">0 lines</span></div>
         <div id="invoice-lines"></div>
         <p id="invoice-empty" class="empty">No lines yet — scan a barcode or add a manual line.</p>
       </div>
 
       <div class="card">
-        <div class="row"><span>Subtotal 21%</span><span id="invoice-sub21">€0.00</span></div>
-        <div class="row"><span>Subtotal 9%</span><span id="invoice-sub9">€0.00</span></div>
-        <div class="row" style="align-items:baseline; margin-top:6px;">
-          <span style="font-size:14px;">Total</span>
-          <span id="invoice-total" style="font-size:28px; font-weight:500; color:var(--ink);">€0.00</span>
+        <div class="row label-strong"><span>Subtotal 21%</span><span id="invoice-sub21">€0.00</span></div>
+        <div class="row label-strong"><span>Subtotal 9%</span><span id="invoice-sub9">€0.00</span></div>
+        <div class="row label-strong" style="align-items:baseline; margin-top:6px;">
+          <span style="font-size:17px;">Total</span>
+          <span id="invoice-total" style="font-size:28px;">€0.00</span>
         </div>
       </div>
 
@@ -247,7 +277,7 @@
     <!-- ---- History ---- -->
     <div id="sub-invoice-history" style="display:none;">
       <div class="card">
-        <div class="row" style="font-weight:500; color:var(--ink);"><span>Saved invoices</span><span id="invoice-history-count">0</span></div>
+        <div class="row section-title"><span>Saved invoices</span><span id="invoice-history-count">0</span></div>
         <button id="invoice-backup-btn" class="btn" style="margin-top:10px;">Download invoice backup (CSV)</button>
 
         <div style="margin-top:16px; padding-top:16px; border-top:1px solid var(--border);">
